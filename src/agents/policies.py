@@ -273,8 +273,14 @@ class OpenVLAModel(Agent):
 
         super().act(obs)
         # Parse payload components
-        assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape, use lanczos"
-        image = obs.cameras["rgb_side"]
+        #assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape, use lanczos"
+        # image = obs.cameras["rgb_side"]
+        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+        side = decode_jpeg(side)
+        side = v2.Resize((256, 256))(side)        
+        assert side.shape == (256, 256, 3)
+        image = np.array(side)
         unnorm_key = self.unnorm_key
 
         # Run VLA Inference
