@@ -144,9 +144,10 @@ class OpenPiModel(Agent):
         self.openpi_path = self.checkpoint_path.format(checkpoint_step=self.checkpoint_step)
 
         self.cfg = config.get_config(model_name)
-        self.chunks = 20
+        self.chunks = 20 #20 # 1
         self.s = self.chunks
         self.a = None
+        self.rtc = True # real time control flag
 
     def initialize(self):
         from openpi.policies import policy_config
@@ -156,17 +157,18 @@ class OpenPiModel(Agent):
 
         # Create a trained policy.
         self.policy = policy_config.create_trained_policy(self.cfg, checkpoint_dir)
+        print("policy created")
 
     def act(self, obs: Obs) -> Act:
         # Run inference on a dummy example.
         # observation = {f"observation/{k}": v for k, v in obs.cameras.items()}
-
-        if self.s < self.chunks:
-            self.s += 1
-            return Act(action=self.a[self.s])
-        
-        else:
-            self.s = 0
+        if not self.rtc:
+            if self.s < self.chunks:
+                self.s += 1
+                return Act(action=self.a[self.s])
+            
+            else:
+                self.s = 0
 
         side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
         side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
@@ -191,17 +193,29 @@ class OpenPiModel(Agent):
                 "observation/wrist_image": wrist,
                 "observation/state": np.concatenate([obs.info["joints"], [1-obs.gripper]]),
                 "prompt": self.instruction,
-            }
-        )
-        action_chunk = self.policy.infer(observation)["actions"]
+            })
+        # calculate the time it takes to run policy inference
+        import time
+        t1 = time.time()
+        action_chunk = self.policy.infer(observation, is_rtc=self.rtc)["actions"]
+        t2 = time.time()
+        elapsed = t2 - t1
+        # print(f"OpenPiModel.infer needed time: {elapsed}s")
         # convert gripper action
         action_chunk[:,-1] = 1 - action_chunk[:,-1]
         self.a = action_chunk
-
         # return Act(action=action_chunk[0])
-        return Act(action=action_chunk[0])
+        print("action chunk shape" ,action_chunk.shape)
+        print("Inference time (s): ", elapsed)
+        if self.rtc:
+            return Act(action=action_chunk, info={"inference_time_s": float(elapsed)})
+        return Act(action=action_chunk[0], info={"inference_time_s": float(elapsed)})
 
-
+    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        info = super().reset(obs, instruction, **kwargs)
+        self.policy._previous_action = None
+        print("Resetting OpenPiModel with instruction:", instruction)
+        return info
 
 class OpenVLAModel(Agent):
     # === Utilities ===
@@ -279,8 +293,10 @@ class OpenVLAModel(Agent):
         side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
         side = decode_jpeg(side)
         side = v2.Resize((256, 256))(side)        
+        side = side.permute(1, 2, 0).numpy()
+        image = side
         assert side.shape == (256, 256, 3)
-        image = np.array(side)
+
         unnorm_key = self.unnorm_key
 
         # Run VLA Inference
@@ -289,7 +305,7 @@ class OpenVLAModel(Agent):
         # to use temperature use: do_sample=True, temperature=50.0
         action = self.vla.predict_action(**inputs, unnorm_key=unnorm_key, do_sample=False)
         # unsqueeze to add horizon dimension
-        return Act(action=action[None])
+        return Act(action=action)
 
 
 class OctoModel(Agent):
@@ -352,6 +368,11 @@ class OctoModel(Agent):
             logging.info(f"Using custom checkpoint path: {self.octo_path} with checkpoint step: {self.checkpoint_step}")
         logging.info(f"Using unnorm_key: {self.unnorm_key}")
 
+
+        self.chunks = 1
+        self.s = self.chunks
+        self.a = None
+
     def initialize(self):
         os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = (
             "false"  # disable preallocation of memory in jax (might make it less efficient)
@@ -394,13 +415,40 @@ class OctoModel(Agent):
 
         self.num_obs += 1
 
+
+        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+        side = decode_jpeg(side)
+        side = v2.Resize((256, 256))(side)        
+        side = side.permute(1, 2, 0).numpy()
+        assert side.shape == (256, 256, 3)
+        obs.cameras["rgb_side"] = side
+
+        # wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+        # wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+        # wrist = decode_jpeg(wrist)
+        # wrist = v2.Resize((128, 128))(wrist)        
+        # wrist = wrist.permute(1, 2, 0).numpy()
+        # assert wrist.shape == (128, 128, 3)
+        # obs.cameras["rgb_wrist"] = wrist
+
+
         # single image
-        assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape, use lanczos"
-        obs = {"image_primary": obs.cameras["rgb_side"]}
+        # assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape, use lanczos"
+        obs = {"image_primary": obs.cameras["rgb_side"]
+               #,"image_wrist": obs.cameras["rgb_wrist"]
+               }
 
         self.history.append(obs)
         assert len(self.history) == self.horizon, "forgot reset?"
         full_obs = stack_and_pad(self.history, self.num_obs)
+
+        if self.s < self.chunks:
+            self.s += 1
+            return Act(action=np.array(self.a[self.s]))
+        
+        else:
+            self.s = 0
 
         actions = self.policy_fn(
             jax.tree_map(
@@ -410,12 +458,34 @@ class OctoModel(Agent):
             self.task,
         )
         # remove the batch dimension (batch, horizon, action)
-        return Act(action=np.array(actions[0, :, :]))
+        # print(actions.shape)
+        self.a = actions[0, :, :]
+        return Act(action=np.array(actions[0, 0, :]))
 
     def reset(self, obs: Obs, instruction: Any):
         super().reset(obs, instruction)
-        assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape"
-        obs = {"image_primary": obs.cameras["rgb_side"]}
+        
+        # assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape"
+        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+        side = decode_jpeg(side)
+        side = v2.Resize((256, 256))(side)        
+        side = side.permute(1, 2, 0).numpy()
+        assert side.shape == (256, 256, 3)
+        obs.cameras["rgb_side"] = side
+        # single image
+
+        # wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+        # wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+        # wrist = decode_jpeg(wrist)
+        # wrist = v2.Resize((128, 128))(wrist)        
+        # wrist = wrist.permute(1, 2, 0).numpy()
+        # assert wrist.shape == (128, 128, 3)
+        # obs.cameras["rgb_wrist"] = wrist
+
+        obs = {"image_primary": obs.cameras["rgb_side"]
+               # ,"image_wrist": obs.cameras["rgb_wrist"]
+              }
         self.task = self.model.create_tasks(texts=[instruction])
         self.num_obs = 1
         self.history.extend([obs] * self.horizon)

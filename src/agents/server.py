@@ -56,7 +56,11 @@ class AgentService(rpyc.Service):
                 camera_name: dataclass_from_dict(SharedMemoryPayload, camera_data)
                 for camera_name, camera_data in obs.cameras.items()
             }
-        return json_numpy.dumps(asdict(self.agent.act(obs)))
+        action = asdict(self.agent.act(obs))
+        print("action dict", action["action"].shape) # TODO: check why shape is (50,8) and sometimes (8,) ???
+        #print("action data", action["action"])
+        
+        return json_numpy.dumps(action)
 
     @rpyc.exposed
     def reset(self, args: bytes) -> str:
