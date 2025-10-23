@@ -147,8 +147,8 @@ class OpenPiModel(Agent):
         self.chunks = 20 #20 # 1
         self.s = self.chunks
         self.a = None
-        self.rtc = True # real time control flag
-
+        from agents.utils.save_chunks import ChunkSaverMin
+        self.chunk_saver = ChunkSaverMin("/home/epez82ox/repos/agents/src/agents/utils/dbg_chunks")
     def initialize(self):
         from openpi.policies import policy_config
         from openpi.shared import download
@@ -162,7 +162,7 @@ class OpenPiModel(Agent):
     def act(self, obs: Obs) -> Act:
         # Run inference on a dummy example.
         # observation = {f"observation/{k}": v for k, v in obs.cameras.items()}
-        if not self.rtc:
+        if not self.policy.model._is_rtc:
             if self.s < self.chunks:
                 self.s += 1
                 return Act(action=self.a[self.s])
@@ -197,7 +197,7 @@ class OpenPiModel(Agent):
         # calculate the time it takes to run policy inference
         import time
         t1 = time.time()
-        action_chunk = self.policy.infer(observation, is_rtc=self.rtc)["actions"]
+        action_chunk = self.policy.infer(observation)["actions"]
         t2 = time.time()
         elapsed = t2 - t1
         # print(f"OpenPiModel.infer needed time: {elapsed}s")
@@ -207,13 +207,30 @@ class OpenPiModel(Agent):
         # return Act(action=action_chunk[0])
         print("action chunk shape" ,action_chunk.shape)
         print("Inference time (s): ", elapsed)
-        if self.rtc:
+
+                # ensure numpy for saving
+        if hasattr(action_chunk, "detach"):
+            action_chunk_np = action_chunk.detach().cpu().numpy()
+        else:
+            action_chunk_np = np.asarray(action_chunk)
+
+        # === SAVE RAW CHUNK FIRST (exact policy output) ===
+        _, csv_path = self.chunk_saver.save(action_chunk_np)
+        print(f"[chunk] RAW saved -> {csv_path}  ({elapsed:.3f}s)")
+
+        if self.policy.model._is_rtc:
             return Act(action=action_chunk, info={"inference_time_s": float(elapsed)})
         return Act(action=action_chunk[0], info={"inference_time_s": float(elapsed)})
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         info = super().reset(obs, instruction, **kwargs)
-        self.policy._previous_action = None
+        self.policy.model._is_rtc = kwargs.get("is_rtc", False)
+        self.policy.model._previous_action = None
+        self.policy.model._s = kwargs.get("s", False)
+        self.policy.model._d= kwargs.get("d", False)
+        print("RTC mode: ", self.policy.model._is_rtc)
+        print("s: ", self.policy.model._s)
+        print("d: ", self.policy.model._d)
         print("Resetting OpenPiModel with instruction:", instruction)
         return info
 
