@@ -8,19 +8,28 @@ def load_chunk_csv(path: str) -> np.ndarray:
     arr = np.loadtxt(path, delimiter=",", skiprows=1)
     return arr[:, 1:]  # (T,8)
 
-def plot_8dims(A: np.ndarray, out_png: str, title: str = None, shade_tail: int = 10):
+def plot_8dims(A: np.ndarray, out_png: str, title: str = None, s=25, d=10, shade ="tail", first=False):
     T, D = A.shape
+
     assert D == 8, f"Expected 8 dims, got {D}"
     t = np.arange(T)
 
     fig, axes = plt.subplots(8, 1, figsize=(12, 10), sharex=True)
-    for d in range(8):
-        ax = axes[d]
-        ax.plot(t, A[:, d], linewidth=1)
-        if shade_tail > 0 and T > shade_tail:
-            ax.axvspan(T - shade_tail - 0.5, T - 0.5, alpha=0.12)
+    for dim in range(8):
+        ax = axes[dim]
+        ax.plot(t, A[:, dim], linewidth=1)
+        # inside plot_8dims(...):
+        if shade == "tail":
+            if first:
+                ax.axvspan(s - 0.5, s + d - 0.5, alpha=0.12)
+            else:
+                # overlap tail for k≥2 within this chunk: [d+s, d+s+d)
+                ax.axvspan(d + s - 0.5, d + s + d - 0.5, alpha=0.12)
+        else:  # "head"
+            ax.axvspan(0 - 0.5, d - 0.5, alpha=0.12)  # optional: start at -0.5 for symmetry
+
         ax.grid(True, alpha=0.3)
-        ax.set_ylabel(f"d{d}")
+        ax.set_ylabel(f"d{dim}")
     axes[-1].set_xlabel("step")
     if title:
         fig.suptitle(title, y=0.995, fontsize=12)
@@ -48,11 +57,24 @@ def main(root_or_csv: str):
         print(f"No CSVs found in '{root_or_csv}'")
         return
 
-    for p in csvs:
-        A = load_chunk_csv(p)
-        base = os.path.splitext(os.path.basename(p))[0]
-        out_png = os.path.join(outdir, base + "_8dims.png")
-        plot_8dims(A, out_png, title=base)
+    for i in range(len(csvs)-1):
+        p = csvs[i]
+        c = csvs[i+1]
+        prev = load_chunk_csv(p)
+        curr = load_chunk_csv(c)
+        # inside main(), compute distinct bases and filenames
+        prev_base = os.path.splitext(os.path.basename(p))[0]
+        curr_base = os.path.splitext(os.path.basename(c))[0]
+        prev_out_png = os.path.join(outdir, prev_base + "_tail_8dims.png")
+        curr_out_png = os.path.join(outdir, curr_base + "_head_8dims.png")
+
+        if i == 0:
+            plot_8dims(prev, prev_out_png, title=prev_base, shade='tail', first=True)
+            plot_8dims(curr, curr_out_png, title=curr_base, shade='head')
+        else:
+            plot_8dims(prev, prev_out_png, title=prev_base, shade='tail')
+            plot_8dims(curr, curr_out_png, title=curr_base, shade='head')
+
 
 if __name__ == "__main__":
     # Usage:

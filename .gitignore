@@ -12,3 +12,7 @@ wandb
 run_logs
 .ipynb_checkpoints
 .not*
+*csv
+*.png
+*.npz
+*.txt

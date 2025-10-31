@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, sys, numpy as np
+import os, sys, glob, numpy as np
 import matplotlib.pyplot as plt
 
 def _latest_csv(root: str) -> str:
@@ -45,14 +45,46 @@ def _plot_series(A: np.ndarray, out: str, title: str):
     plt.tight_layout(); plt.savefig(out, dpi=150); plt.close()
     print(f"[plot] {out}")
 
-def main(root="dbg_chunks", csv_path=None):
-    if csv_path is None:
-        csv_path = _latest_csv(root)
-    A = _load_csv(csv_path)
-    _print_stats(A)
-    _plot_series(A, os.path.join(root, "chunk_full.png"), "Chunk (all dims)")
-    _plot_series(np.diff(A, axis=0), os.path.join(root, "chunk_diff.png"), "Δ Chunk (per-step change)")
-    _plot_series(A[-10:], os.path.join(root, "chunk_tail.png"), "Tail (last 10 steps)")
+def main(root_or_csv="dbg_chunks", csv_path=None):
+    print(f"[analyze] root_or_csv='{root_or_csv}' csv_path='{csv_path}'")
+    if root_or_csv.endswith(".csv") and os.path.isfile(root_or_csv):
+        csvs = [root_or_csv]
+        outdir = os.path.dirname(root_or_csv) or "."
+    else:
+        outdir = root_or_csv
+        csvs = sorted(glob.glob(os.path.join(root_or_csv, "*.csv")))
+        if not csvs:
+            # try pointer
+            ptr = os.path.join(root_or_csv, "chunk_latest_path.txt")
+            if os.path.exists(ptr):
+                with open(ptr) as f:
+                    p = f.read().strip()
+                if os.path.exists(p):
+                    csvs = [p]
+    if not csvs:
+        print(f"No CSVs found in '{root_or_csv}'")
+        return
+
+    for i,csv_path in enumerate(csvs):
+        print(f"\n=== Analyzing chunk {i+1}/{len(csvs)}: {csv_path} ===")
+        A = _load_csv(csv_path)
+        base = os.path.splitext(os.path.basename(csv_path))[0]
+        full_png = os.path.join(outdir, base + "_chunk_full.png")
+        diff_png = os.path.join(outdir, base + "_chunk_diff.png")
+        tail_png = os.path.join(outdir, base + "_chunk_tail.png")
+
+        _print_stats(A)
+        _plot_series(A, full_png, "Chunk (all dims)")
+        _plot_series(np.diff(A, axis=0), diff_png, "Δ Chunk (per-step change)")
+        _plot_series(A[-10:], tail_png, "Tail (last 10 steps)")
+
+    # if csv_path is None:
+    #     csv_path = _latest_csv(root)
+    # A = _load_csv(csv_path)
+    # _print_stats(A)
+    # _plot_series(A, os.path.join(root, "chunk_full.png"), "Chunk (all dims)")
+    # _plot_series(np.diff(A, axis=0), os.path.join(root, "chunk_diff.png"), "Δ Chunk (per-step change)")
+    # _plot_series(A[-10:], os.path.join(root, "chunk_tail.png"), "Tail (last 10 steps)")
 
 if __name__ == "__main__":
     # usage: python tools/chunk_quicklook.py [root] [optional_csv]
