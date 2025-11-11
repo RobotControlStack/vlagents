@@ -147,8 +147,8 @@ class OpenPiModel(Agent):
         self.chunks = 20 #20 # 1
         self.s = self.chunks
         self.a = None
-        from agents.utils.save_chunks import ChunkSaverMin
-        self.chunk_saver = ChunkSaverMin("/home/epez82ox/repos/agents/src/agents/utils/dbg_chunks")
+        self.save_chunks = None
+        # self.chunk_saver = ChunkSaverMin("/home/epez82ox/repos/agents/src/agents/utils/dbg_chunks_02")
     def initialize(self):
         from openpi.policies import policy_config
         from openpi.shared import download
@@ -213,10 +213,10 @@ class OpenPiModel(Agent):
             action_chunk_np = action_chunk.detach().cpu().numpy()
         else:
             action_chunk_np = np.asarray(action_chunk)
-
-        # === SAVE RAW CHUNK FIRST (exact policy output) ===
-        _, csv_path = self.chunk_saver.save(action_chunk_np)
-        print(f"[chunk] RAW saved -> {csv_path}  ({elapsed:.3f}s)")
+        if self.save_chunks:
+            # === SAVE RAW CHUNK FIRST (exact policy output) ===
+            _, csv_path = self.chunk_saver.save(action_chunk_np)
+            print(f"[chunk] RAW saved -> {csv_path}  ({elapsed:.3f}s)")
 
         if self.policy.model._is_rtc:
             return Act(action=action_chunk, info={"inference_time_s": float(elapsed)})
@@ -228,9 +228,16 @@ class OpenPiModel(Agent):
         self.policy.model._previous_action = None
         self.policy.model._s = kwargs.get("s", False)
         self.policy.model._d= kwargs.get("d", False)
+        self.save_chunks = kwargs.get("save_chunks", False)
+        dbg_folder_name = kwargs.get("dbg_folder_name", "dbg_chunks")
+        if self.save_chunks and dbg_folder_name is not None:
+            from agents.utils.save_chunks import ChunkSaverMin
+            self.chunk_saver = ChunkSaverMin(dbg_folder_name)
         print("RTC mode: ", self.policy.model._is_rtc)
         print("s: ", self.policy.model._s)
         print("d: ", self.policy.model._d)
+        print("save_chunks: ", self.save_chunks)
+        print("dbg_folder_name: ", dbg_folder_name)
         print("Resetting OpenPiModel with instruction:", instruction)
         return info
 

@@ -1,9 +1,16 @@
 # utils/chunk_saver_min.py
 import os, time, numpy as np
+from pathlib import Path
 
 class ChunkSaverMin:
     def __init__(self, root="dbg_chunks"):
-        self.root = root
+        # get current file parent folder path and make the root relative to it
+        file_dir = Path(__file__).resolve().parent
+        # If root is an absolute path, use it as-is; otherwise place it inside this file's parent folder
+        if os.path.isabs(root):
+            self.root = root
+        else:
+            self.root = str(file_dir / root)
         os.makedirs(self.root, exist_ok=True)
         self._ctr = 0
 
