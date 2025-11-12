@@ -16,3 +16,5 @@ run_logs
 *.png
 *.npz
 *.txt
+*.json
+agents/src/agents/utils/saved_chunks/

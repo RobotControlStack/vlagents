@@ -10,7 +10,7 @@ class ChunkSaverMin:
         if os.path.isabs(root):
             self.root = root
         else:
-            self.root = str(file_dir / root)
+            self.root = str(file_dir/"saved_chunks"/ root/"chunks")
         os.makedirs(self.root, exist_ok=True)
         self._ctr = 0
 

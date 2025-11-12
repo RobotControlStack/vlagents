@@ -100,7 +100,7 @@ def resolve_targets(root_or_csv: str):
         outdir = os.path.dirname(root_or_csv) or "."
     else:
         outdir = root_or_csv
-        csvs = sorted(glob.glob(os.path.join(root_or_csv, "*.csv")))
+        csvs = sorted(glob.glob(os.path.join(os.path.join(root_or_csv, "chunks"), "*.csv")))
         if not csvs:
             ptr = os.path.join(root_or_csv, "chunk_latest_path.txt")
             if os.path.exists(ptr):
@@ -121,6 +121,8 @@ def main():
     args = ap.parse_args()
 
     outdir, csvs = resolve_targets(args.target)
+    outdir = os.path.join(outdir, "overlap_analysis")
+    os.makedirs(outdir, exist_ok=True)
     if not csvs:
         print(f"No CSVs found in '{args.target}'")
         return
@@ -177,3 +179,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+# python chunk_plot_dims_overlap.py saved_chunks/{dbg_rtc_07} --s 12 --d 10 --overlap-figs --shade-head
