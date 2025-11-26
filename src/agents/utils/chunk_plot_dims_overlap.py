@@ -37,9 +37,9 @@ def plot_8dims(
 
         if shade == "tail":
             if tail_phase == "first":
-                start = s
+                start = s - d
             else:
-                start = d + s
+                start = s
             end = start + d
             # clamp to timeline
             start_v = max(0, min(T, start)) - 0.5
@@ -150,7 +150,10 @@ def main():
 
         # ----- overlap metrics vs previous -----
         if prevA is not None:
-            s_clamped = max(0, min(args.s, prevA.shape[0]))
+            if i == 1:
+                s_clamped = max(0, min(args.s - args.d, prevA.shape[0]))
+            else:
+                s_clamped = max(0, min(args.s, prevA.shape[0]))
             ov_eff = max(0, min(ov, prevA.shape[0] - s_clamped, A.shape[0]))
             if ov_eff > 0:
                 prev_tail = prevA[s_clamped:s_clamped+ov_eff, :]
