@@ -1,0 +1,199 @@
+diff --git a/src/agents/policies.py b/src/agents/policies.py
+index a440408..827ec58 100644
+--- a/src/agents/policies.py
++++ b/src/agents/policies.py
+@@ -131,76 +131,147 @@ class VjepaAC(Agent):
+ 
+     def __init__(
+         self,
++        cfg_path: str,
+         model_name: str = "vjepa2_ac_vit_giant",
+         default_checkpoint_path: str = "vjepa2_ac_vit_giant",
+         **kwargs,
+     ) -> None:
+         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
++        import yaml 
+ 
+-        from vjepa2.configs.inference import vjepa2-ac-vitg.utn-robot.yaml
++        self.cfg_path = cfg_path
++        with open(self.cfg_path, "r") as f:
++            self.cfg = yaml.safe_load(f)
+ 
+-        logging.info(f"checkpoint_path: {self.checkpoint_path}, checkpoint_step: {self.checkpoint_step}")
+-        self.openpi_path = self.checkpoint_path.format(checkpoint_step=self.checkpoint_step)
+-
+-        self.cfg = config.get_config(model_name)
+-        self.chunks = 20
+-        self.s = self.chunks
+-        self.a = None
+ 
+     def initialize(self):
+-        from openpi.policies import policy_config
+-        from openpi.shared import download
++        # VJEPA imports
++        from vjepa2.app.vjepa_droid.transforms import make_transforms
++        from vjepa2.notebooks.utils.world_model_wrapper import WorldModel
++
++        device = self.cfg.get("device", 'cuda')
++        save_path = self.cfg.get("save_path", 'exp_1.png')
++
++        # data config
++        cfgs_data = self.cfg.get("data")
++        fps = cfgs_data.get("fps", 4)
++        crop_size = cfgs_data.get("crop_size", 256)
++        patch_size = cfgs_data.get("patch_size")
++        pin_mem = cfgs_data.get("pin_mem", False)
++        num_workers = cfgs_data.get("num_workers", 1)
++        persistent_workers = cfgs_data.get("persistent_workers", True)
++        
++        # data augs
++        cfgs_data_aug = self.cfg.get("data_aug")
++        horizontal_flip = cfgs_data_aug.get("horizontal_flip", False)
++        ar_range = cfgs_data_aug.get("random_resize_aspect_ratio", [3 / 4, 4 / 3])
++        rr_scale = cfgs_data_aug.get("random_resize_scale", [0.3, 1.0])
++        motion_shift = cfgs_data_aug.get("motion_shift", False)
++        reprob = cfgs_data_aug.get("reprob", 0.0)
++        use_aa = cfgs_data_aug.get("auto_augment", False)
++
++        # exp config
++        cfgs_mpc_args= self.cfg.get("mpc_args")
++        self.rollout_horizon = cfgs_mpc_args.get("rollout_horizon", 2)
++        samples = cfgs_mpc_args.get("samples", 25)
++        topk = cfgs_mpc_args.get("topk", 10)
++        cem_steps = cfgs_mpc_args.get("cem_steps", 1)
++        momentum_mean = cfgs_mpc_args.get("momentum_mean", 0.15)
++        momentum_mean_gripper = cfgs_mpc_args.get("momentum_mean_gripper", 0.15)
++        momentum_std = cfgs_mpc_args.get("momentum_std", 0.75)
++        momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", .15)
++        maxnorm = cfgs_mpc_args.get("maxnorm", 0.075)
++        verbose = cfgs_mpc_args.get("verbose", True)
++
++
++
++        # Initialize transform (random-resize-crop augmentations)
++        self.transform = make_transforms(
++            random_horizontal_flip=horizontal_flip,
++            random_resize_aspect_ratio=ar_range,
++            random_resize_scale=rr_scale,
++            reprob=reprob,
++            auto_augment=use_aa,
++            motion_shift=motion_shift,
++            crop_size=crop_size,
++        )
+ 
+         encoder, predictor = torch.hub.load("~/vjepa2", # root of the vjepa source code 
+                                         "vjepa2_ac_vit_giant", # model type
+                                         source="local", 
+                                         pretrained=True) 
+ 
+-        checkpoint_dir = download.maybe_download(self.openpi_path)
++        # check if model weights are loaded on cuda
++        encoder.to(device)
++        predictor.to(device)                             
++
++        # World model wrapper initialization
++
++        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)    
++        self.world_model = WorldModel(
++            encoder=encoder,
++            predictor=predictor,
++            tokens_per_frame=tokens_per_frame,
++            mpc_args={
++                "rollout": self.rollout_horizon, 
++                "samples": samples,
++                "topk": topk,
++                "cem_steps": cem_steps,
++                "momentum_mean": momentum_mean,
++                "momentum_mean_gripper": momentum_mean_gripper,
++                "momentum_std": momentum_std,
++                "momentum_std_gripper": momentum_std_gripper,
++                "maxnorm": maxnorm,
++                "verbose": verbose,
++            },
++            normalize_reps=True,
++            device=device
++        )
+ 
+-        # Create a trained policy.
+-        self.policy = policy_config.create_trained_policy(self.cfg, checkpoint_dir)
+ 
+     def act(self, obs: Obs) -> Act:
+-        # Run inference on a dummy example.
+-        # observation = {f"observation/{k}": v for k, v in obs.cameras.items()}
+ 
+-        if self.s < self.chunks:
+-            self.s += 1
+-            return Act(action=self.a[self.s])
+-        
+-        else:
+-            self.s = 0
++        with torch.no_grad():
+ 
+-        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+-        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+-        side = decode_jpeg(side)
+-        side = v2.Resize((256, 256))(side)
++            # Pre-trained VJEPA 2 ENCODER: # [1, 3, 1, 256, 256] -> [1, 3, 1, 256, 1408] i.e, [B, C, Time, Patches, dim]
++            z_n = self.world_model.encode(self.transform(obs.cameras["rgb_side"])) 
++            B = z_n.shape[0]
++            T = z_n.shape[2]
+ 
+-        wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+-        wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+-        wrist = decode_jpeg(wrist)
+-        wrist = v2.Resize((256, 256))(wrist)
++            # [1, 1, 76] -> [B, Time, state]
++            # TODO: gripper state in DROID? In rcs 0: is close and 1: is open
++            s_n = np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0).reshape(B, T, -1)
+ 
+-        # side = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
+-        # wrist = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
+-        # return Act(action=np.array([]))
+-        observation = {}
+-        observation.update(
+-            {
+-                "observation/image": side,
+-                "observation/wrist_image": wrist,
+-                "observation/state": np.concatenate([obs.info["joints"], [1-obs.gripper]]),
+-                "prompt": self.instruction,
+-            }
+-        )
+-        action_chunk = self.policy.infer(observation)["actions"]
+-        # convert gripper action
+-        action_chunk[:,-1] = 1 - action_chunk[:,-1]
+-        self.a = action_chunk
++            # Action conditioned predictor and zero-shot action inference with CEM
++            actions = self.world_model.infer_next_action(
++                                    z_n, 
++                                    s_n, 
++                                    z_n
++                                    ) # [4, 7]
++
++            # compute predicted next states
++            s_n_k = s_n  # [1, 1, 7]
++            predicted_states = s_n  # [1, 1, 7]
++            for i in range(self.rollout_horizon): 
++                a_n = actions[i].unsqueeze(0).unsqueeze(1)  # [1, 1, 7]
++                s_next = compute_new_pose(s_n_k, a_n)  # [1, 1, 7]
++                predicted_states = torch.cat((predicted_states, s_next), dim=1)  # [1, i+2, 7]
++                s_n_k = s_next  
++
++            predicted_state_trajs.append((k, predicted_states.cpu()))
++
++            print(f"Predicted new state: {predicted_states.cpu()}") # [1, rollout_horizon+1, 7]
++            print(f"Ground truth new state: {ground_truth_traj}") # [1, rollout_horizon+1, 7]
++
++
++        return Act(action=np.array([]))
++
++    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
++        super().reset(obs, instruction, **kwargs)
++        # TODO: actually calculate goal representation
++        self.goal_rep = instruction
++        return {}
+ 
+-        # return Act(action=action_chunk[0])
+-        return Act(action=action_chunk[0])
+ 
+ class OpenPiModel(Agent):
+ 
