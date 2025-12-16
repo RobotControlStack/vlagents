@@ -127,6 +127,80 @@ class TestAgent(Agent):
         }
         return info
 
+class VjepaAC(Agent):
+
+    def __init__(
+        self,
+        model_name: str = "vjepa2_ac_vit_giant",
+        default_checkpoint_path: str = "vjepa2_ac_vit_giant",
+        **kwargs,
+    ) -> None:
+        super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
+
+        from vjepa2.configs.inference import vjepa2-ac-vitg.utn-robot.yaml
+
+        logging.info(f"checkpoint_path: {self.checkpoint_path}, checkpoint_step: {self.checkpoint_step}")
+        self.openpi_path = self.checkpoint_path.format(checkpoint_step=self.checkpoint_step)
+
+        self.cfg = config.get_config(model_name)
+        self.chunks = 20
+        self.s = self.chunks
+        self.a = None
+
+    def initialize(self):
+        from openpi.policies import policy_config
+        from openpi.shared import download
+
+        encoder, predictor = torch.hub.load("~/vjepa2", # root of the vjepa source code 
+                                        "vjepa2_ac_vit_giant", # model type
+                                        source="local", 
+                                        pretrained=True) 
+
+        checkpoint_dir = download.maybe_download(self.openpi_path)
+
+        # Create a trained policy.
+        self.policy = policy_config.create_trained_policy(self.cfg, checkpoint_dir)
+
+    def act(self, obs: Obs) -> Act:
+        # Run inference on a dummy example.
+        # observation = {f"observation/{k}": v for k, v in obs.cameras.items()}
+
+        if self.s < self.chunks:
+            self.s += 1
+            return Act(action=self.a[self.s])
+        
+        else:
+            self.s = 0
+
+        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+        side = decode_jpeg(side)
+        side = v2.Resize((256, 256))(side)
+
+        wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+        wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+        wrist = decode_jpeg(wrist)
+        wrist = v2.Resize((256, 256))(wrist)
+
+        # side = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
+        # wrist = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
+        # return Act(action=np.array([]))
+        observation = {}
+        observation.update(
+            {
+                "observation/image": side,
+                "observation/wrist_image": wrist,
+                "observation/state": np.concatenate([obs.info["joints"], [1-obs.gripper]]),
+                "prompt": self.instruction,
+            }
+        )
+        action_chunk = self.policy.infer(observation)["actions"]
+        # convert gripper action
+        action_chunk[:,-1] = 1 - action_chunk[:,-1]
+        self.a = action_chunk
+
+        # return Act(action=action_chunk[0])
+        return Act(action=action_chunk[0])
 
 class OpenPiModel(Agent):
 
