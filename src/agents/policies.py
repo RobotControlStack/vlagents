@@ -151,8 +151,9 @@ class VjepaAC(Agent):
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
 
-        device = self.cfg.get("device", 'cuda')
-        save_path = self.cfg.get("save_path", 'exp_1.png')
+        self.device = self.cfg.get("device", 'cuda')
+        self.save_path = self.cfg.get("save_path", 'exp_1.png')
+        self.goal_img = self.cfg.get("goal_img", 'exp_1.png')
 
         # data config
         cfgs_data = self.cfg.get("data")
@@ -201,8 +202,8 @@ class VjepaAC(Agent):
                                         pretrained=True) 
 
         # load model to cuda
-        encoder.to(device)
-        predictor.to(device)                             
+        encoder.to(self.device)
+        predictor.to(self.device)                             
 
         # World model wrapper initialization
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)    
@@ -223,7 +224,7 @@ class VjepaAC(Agent):
                 "verbose": verbose,
             },
             normalize_reps=True,
-            device=device
+            device=self.device
         )
 
 
@@ -231,18 +232,29 @@ class VjepaAC(Agent):
 
         with torch.no_grad():
 
-            # Pre-trained VJEPA 2 ENCODER
-            # [256, 256, 3] -> [1, 3, 1, 256, 256] -> [1, 3, 1, 256, 1408] i.e, 
-            # [B, C, Time, Patches, dim]
-            z_n = self.world_model.encode(self.transform(obs.cameras["rgb_side"])) 
-            B = z_n.shape[0]
-            T = z_n.shape[2]
+            # read from camera-stream
+            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+            side = torch.frombuffer(bytearray(side), 
+                                    dtype=torch.uint8
+                                    )
+            side = decode_jpeg(side)
 
-            # [1, 1, 76] -> [B, Time, state]
+            # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
+            side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
+
+            # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
+            input_image_tensor = (self.transform(side)[None, :]).to(device=self.device, 
+                                                                dtype=torch.float, 
+                                                                non_blocking=True
+                                                                )
+            # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
+            z_n = self.world_model.encode(input_image_tensor) 
+
+            # [1, 7] -> [B, state_dim]
             # TODO: gripper state in DROID? In rcs 0: is close and 1: is open
-            s_n = torch.tensor(np.concatenate(([obs.info["xyzrpy"], 
+            s_n = torch.tensor((np.concatenate(([obs.info["xyzrpy"], 
                                                 [1-obs.gripper]]), 
-                                                axis=0).reshape(B, T, -1)).to(self.device, 
+                                                axis=0))).unsqueeze(0).to(self.device, 
                                                                           dtype=torch.float, 
                                                                           non_blocking=True)
 
@@ -252,14 +264,29 @@ class VjepaAC(Agent):
                                     s_n, 
                                     self.goal_rep
                                     ) # [rollout_horizon, 7]
+
+            first_action = actions[0].cpu()
+            first_action[-1] = 1 - first_action[-1]
+
             
-        return Act(action=np.array(actions[0]))
+        return Act(action=np.array(first_action))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
+        from PIL import Image
+        img = Image.open(self.goal_img)
+
+        # TODO: change goal image resolution
+        # time dim exp
+        goal_image = np.expand_dims(np.array(img), axis=0) 
+        # batch dim exp
+        goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(device=self.device, 
+                                                                                dtype=torch.float, 
+                                                                                non_blocking=True)
+
         
         with torch.no_grad():
-            self.goal_rep  = self.world_model.encode(self.transform(instruction)) 
+            self.goal_rep  = self.world_model.encode(goal_image_tensor) 
 
         return {}
 
