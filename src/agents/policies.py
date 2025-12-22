@@ -133,7 +133,7 @@ class VjepaAC(Agent):
         self,
         cfg_path: str,
         model_name: str = "vjepa2_ac_vit_giant",
-        default_checkpoint_path: str = "~/.cache/torch/hub/checkpoints/",
+        default_checkpoint_path: str = "",
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
@@ -148,8 +148,8 @@ class VjepaAC(Agent):
 
     def initialize(self):
         # VJEPA imports
-        from vjepa2.app.vjepa_droid.transforms import make_transforms
-        from vjepa2.notebooks.utils.world_model_wrapper import WorldModel
+        from app.vjepa_droid.transforms import make_transforms
+        from inference.utils.world_model_wrapper import WorldModel
 
         device = self.cfg.get("device", 'cuda')
         save_path = self.cfg.get("save_path", 'exp_1.png')
@@ -195,7 +195,7 @@ class VjepaAC(Agent):
         )
 
         # load model
-        encoder, predictor = torch.hub.load("~/vjepa2", # root of the vjepa source code 
+        encoder, predictor = torch.hub.load("./", # root of the vjepa source code 
                                         self.model_name, # model type
                                         source="local", 
                                         pretrained=True) 
@@ -673,4 +673,5 @@ AGENTS = dict(
     octodist=OctoActionDistribution,
     openvladist=OpenVLADistribution,
     openpi=OpenPiModel,
+    vjepa=VjepaAC,
 )
