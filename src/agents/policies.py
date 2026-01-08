@@ -241,6 +241,61 @@ class OpenPiModel(Agent):
         print("Resetting OpenPiModel with instruction:", instruction)
         return info
 
+class LerobotPiModel(Agent):
+    
+    def __init__(
+        self,
+        checkpoint_path: str,
+        **kwargs,
+    ) -> None:
+        super().__init__(default_checkpoint_path=checkpoint_path, **kwargs)
+
+    def initialize(self):
+        from lerobot.lerobot_inference.rtc_controller import RTCDemoConfig, LeRobotPolicy
+        from lerobot.configs.policies import PreTrainedConfig
+        policy_cfg = PreTrainedConfig.from_pretrained(pretrained_name_or_path=self.default_checkpoint_path)
+        cfg = RTCDemoConfig(policy=policy_cfg)
+        cfg.policy.pretrained_path = self.default_checkpoint_path
+        print("Initializing LeRobotPolicy with path:", self.default_checkpoint_path)
+        print("default_checkpoint_path:", self.default_checkpoint_path)
+        self.policy = LeRobotPolicy(cfg=cfg)
+        print("LeRobotPolicy initialized")
+
+    def act(self, obs: Obs) -> Act:
+        import torch
+
+        super().act(obs)
+
+        side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+        side = decode_jpeg(side)
+        side = v2.Resize((256, 256))(side)
+
+        wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+        wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+        wrist = decode_jpeg(wrist)
+        wrist = v2.Resize((256, 256))(wrist)
+        
+        observation = {}
+        observation.update(
+            {
+                "observation.images.image": side,
+                "observation.images.image2": wrist,
+                "observation/state": torch.tensor(np.concatenate([obs.info["joints"], [1-obs.gripper]])), # to torch tensor later
+                "task": [self.instruction],
+            })
+        action = self.policy.infer(observation)
+        # post, orig = self.policy.get_actions(
+        #     obs, prev_chunk_left_over=prev_left, inference_delay=inference_delay
+        # )
+        # action = post.detach().cpu().numpy()
+        return Act(action=np.array(action))
+
+    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        info = super().reset(obs, instruction, **kwargs)
+        print("Resetting LerobotPiModel with instruction:", instruction)
+        return info
+
 class OpenVLAModel(Agent):
     # === Utilities ===
     SYSTEM_PROMPT = (
@@ -637,4 +692,5 @@ AGENTS = dict(
     octodist=OctoActionDistribution,
     openvladist=OpenVLADistribution,
     openpi=OpenPiModel,
+    lerobot_pi=LerobotPiModel
 )
