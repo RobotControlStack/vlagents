@@ -57,8 +57,6 @@ class AgentService(rpyc.Service):
                 for camera_name, camera_data in obs.cameras.items()
             }
         action = asdict(self.agent.act(obs))
-        print("action dict", action["action"].shape) # TODO: check why shape is (50,8) and sometimes (8,) ???
-        #print("action data", action["action"])
         
         return json_numpy.dumps(action)
 
