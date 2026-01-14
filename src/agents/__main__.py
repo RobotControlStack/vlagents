@@ -67,6 +67,7 @@ def _per_process(
     step, _agent_cfg, eval_cfgs, episodes, n_processes, nth_gpu = args
     logging.info(f"Starting evaluation for step {step}")
     os.environ["CUDA_VISIBLE_DEVICES"] = str(nth_gpu)
+    os.environ["CAM_PATH"] = f"{os.environ['RUN_PATH']}/videos/{step}"
     agent_cfg = copy.deepcopy(_agent_cfg)
     agent_cfg.agent_kwargs["checkpoint_step"] = step
 
