@@ -10,12 +10,12 @@ from multiprocessing import resource_tracker, shared_memory
 from operator import getitem
 from pathlib import Path
 from typing import Any, Union
-from torchvision.io import decode_jpeg
-from torchvision.transforms import v2
 
 import numpy as np
-from PIL import Image
 import torch
+from PIL import Image
+from torchvision.io import decode_jpeg
+from torchvision.transforms import v2
 
 
 @dataclass(kw_only=True)
@@ -127,6 +127,7 @@ class TestAgent(Agent):
         }
         return info
 
+
 class VjepaAC(Agent):
 
     def __init__(
@@ -137,7 +138,7 @@ class VjepaAC(Agent):
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
-        import yaml 
+        import yaml
 
         self.cfg_path = cfg_path
         with open(self.cfg_path, "r") as f:
@@ -145,21 +146,19 @@ class VjepaAC(Agent):
 
         self.model_name = model_name
 
-
     def initialize(self):
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
 
-        self.device = self.cfg.get("device", 'cuda')
-        self.save_path = self.cfg.get("save_path", 'exp_1.png')
-        self.goal_img = self.cfg.get("goal_img", 'exp_1.png')
+        self.device = self.cfg.get("device", "cuda")
+        self.goal_img = self.cfg.get("goal_img", "exp_1.png")
 
         # data config
         cfgs_data = self.cfg.get("data")
         fps = cfgs_data.get("fps", 4)
         crop_size = cfgs_data.get("crop_size", 256)
-        
+
         # data augs
         cfgs_data_aug = self.cfg.get("data_aug")
         use_aa = cfgs_data_aug.get("auto_augment", False)
@@ -168,9 +167,9 @@ class VjepaAC(Agent):
         ar_range = cfgs_data_aug.get("random_resize_aspect_ratio", [3 / 4, 4 / 3])
         rr_scale = cfgs_data_aug.get("random_resize_scale", [0.3, 1.0])
         reprob = cfgs_data_aug.get("reprob", 0.0)
-        
+
         # cfgs_mpc_args config
-        cfgs_mpc_args= self.cfg.get("mpc_args")
+        cfgs_mpc_args = self.cfg.get("mpc_args")
         self.rollout_horizon = cfgs_mpc_args.get("rollout_horizon", 2)
         samples = cfgs_mpc_args.get("samples", 25)
         topk = cfgs_mpc_args.get("topk", 10)
@@ -178,11 +177,9 @@ class VjepaAC(Agent):
         momentum_mean = cfgs_mpc_args.get("momentum_mean", 0.15)
         momentum_mean_gripper = cfgs_mpc_args.get("momentum_mean_gripper", 0.15)
         momentum_std = cfgs_mpc_args.get("momentum_std", 0.75)
-        momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", .15)
+        momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", 0.15)
         maxnorm = cfgs_mpc_args.get("maxnorm", 0.075)
         verbose = cfgs_mpc_args.get("verbose", True)
-
-
 
         # Initialize transform (random-resize-crop augmentations)
         self.transform = make_transforms(
@@ -196,23 +193,22 @@ class VjepaAC(Agent):
         )
 
         # load model
-        encoder, predictor = torch.hub.load("./", # root of the vjepa source code 
-                                        self.model_name, # model type
-                                        source="local", 
-                                        pretrained=True) 
+        encoder, predictor = torch.hub.load(
+            "./", self.model_name, source="local", pretrained=True  # root of the vjepa source code  # model type
+        )
 
         # load model to cuda
         encoder.to(self.device)
-        predictor.to(self.device)                             
+        predictor.to(self.device)
 
         # World model wrapper initialization
-        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)    
+        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
         self.world_model = WorldModel(
             encoder=encoder,
             predictor=predictor,
             tokens_per_frame=tokens_per_frame,
             mpc_args={
-                "rollout": self.rollout_horizon, 
+                "rollout": self.rollout_horizon,
                 "samples": samples,
                 "topk": topk,
                 "cem_steps": cem_steps,
@@ -224,9 +220,8 @@ class VjepaAC(Agent):
                 "verbose": verbose,
             },
             normalize_reps=True,
-            device=self.device
+            device=self.device,
         )
-
 
     def act(self, obs: Obs) -> Act:
 
@@ -234,59 +229,52 @@ class VjepaAC(Agent):
 
             # read from camera-stream
             side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            side = torch.frombuffer(bytearray(side), 
-                                    dtype=torch.uint8
-                                    )
+            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
             side = decode_jpeg(side)
 
             # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
             side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
 
             # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
-            input_image_tensor = (self.transform(side)[None, :]).to(device=self.device, 
-                                                                dtype=torch.float, 
-                                                                non_blocking=True
-                                                                )
+            input_image_tensor = (self.transform(side)[None, :]).to(
+                device=self.device, dtype=torch.float, non_blocking=True
+            )
             # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
-            z_n = self.world_model.encode(input_image_tensor) 
+            z_n = self.world_model.encode(input_image_tensor)
 
             # [1, 7] -> [B, state_dim]
-            # TODO: gripper state in DROID? In rcs 0: is close and 1: is open
-            s_n = torch.tensor((np.concatenate(([obs.info["xyzrpy"], 
-                                                [1-obs.gripper]]), 
-                                                axis=0))).unsqueeze(0).to(self.device, 
-                                                                          dtype=torch.float, 
-                                                                          non_blocking=True)
+            # TODO: check gripper state convention
+            # in DROID: 0: is close to 0.86: is open?
+            # In rcs 0: is close and 1: is open
+            s_n = (
+                torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1 - obs.gripper]]), axis=0)))  # [1-obs.gripper]
+                .unsqueeze(0)
+                .to(self.device, dtype=torch.float, non_blocking=True)
+            )
 
             # Action conditioned predictor and zero-shot action inference with CEM
-            actions = self.world_model.infer_next_action(
-                                    z_n, 
-                                    s_n, 
-                                    self.goal_rep
-                                    ) # [rollout_horizon, 7]
+            actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
             first_action[-1] = 1 - first_action[-1]
 
-            
         return Act(action=np.array(first_action))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
         from PIL import Image
+
         img = Image.open(self.goal_img)
 
-        # TODO: change goal image resolution
         # time dim exp
-        goal_image = np.expand_dims(np.array(img), axis=0) 
+        goal_image = np.expand_dims(np.array(img), axis=0)
         # batch dim exp
-        goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(device=self.device, 
-                                                                                dtype=torch.float, 
-                                                                                non_blocking=True)
+        goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
+            device=self.device, dtype=torch.float, non_blocking=True
+        )
 
-        
         with torch.no_grad():
-            self.goal_rep  = self.world_model.encode(goal_image_tensor) 
+            self.goal_rep = self.world_model.encode(goal_image_tensor)
 
         return {}
 
@@ -327,7 +315,7 @@ class OpenPiModel(Agent):
         if self.s < self.chunks:
             self.s += 1
             return Act(action=self.a[self.s])
-        
+
         else:
             self.s = 0
 
@@ -340,9 +328,6 @@ class OpenPiModel(Agent):
         wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
         wrist = decode_jpeg(wrist)
         wrist = v2.Resize((256, 256))(wrist)
-        
-        
-
 
         # side = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
         # wrist = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
@@ -352,18 +337,17 @@ class OpenPiModel(Agent):
             {
                 "observation/image": side,
                 "observation/wrist_image": wrist,
-                "observation/state": np.concatenate([obs.info["joints"], [1-obs.gripper]]),
+                "observation/state": np.concatenate([obs.info["joints"], [1 - obs.gripper]]),
                 "prompt": self.instruction,
             }
         )
         action_chunk = self.policy.infer(observation)["actions"]
         # convert gripper action
-        action_chunk[:,-1] = 1 - action_chunk[:,-1]
+        action_chunk[:, -1] = 1 - action_chunk[:, -1]
         self.a = action_chunk
 
         # return Act(action=action_chunk[0])
         return Act(action=action_chunk[0])
-
 
 
 class OpenVLAModel(Agent):
