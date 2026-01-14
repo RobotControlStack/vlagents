@@ -12,10 +12,7 @@ from pathlib import Path
 from typing import Any, Union
 
 import numpy as np
-import torch
 from PIL import Image
-from torchvision.io import decode_jpeg
-from torchvision.transforms import v2
 
 
 @dataclass(kw_only=True)
@@ -147,6 +144,9 @@ class VjepaAC(Agent):
         self.model_name = model_name
 
     def initialize(self):
+        # torch import
+        import torch
+
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
         from notebooks.utils.world_model_wrapper import WorldModel
@@ -156,7 +156,6 @@ class VjepaAC(Agent):
 
         # data config
         cfgs_data = self.cfg.get("data")
-        fps = cfgs_data.get("fps", 4)
         crop_size = cfgs_data.get("crop_size", 256)
 
         # data augs
@@ -224,6 +223,9 @@ class VjepaAC(Agent):
         )
 
     def act(self, obs: Obs) -> Act:
+        # torch imports
+        import torch
+        from torchvision.io import decode_jpeg
 
         with torch.no_grad():
 
@@ -262,7 +264,8 @@ class VjepaAC(Agent):
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
-        from PIL import Image
+        # imports
+        import torch
 
         img = Image.open(self.goal_img)
 
