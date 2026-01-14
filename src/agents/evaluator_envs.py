@@ -3,24 +3,24 @@ import datetime
 import json
 import logging
 import os
-from pathlib import Path
 import shlex
 import subprocess
 from abc import ABC
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from time import sleep
 from typing import Any
 
 import gymnasium as gym
 import numpy as np
+from PIL import Image
 from simple_slurm import Slurm
 from tqdm import tqdm
 
 from agents.client import RemoteAgent
 from agents.policies import Act, Agent, Obs
 from agents.wrappers import HumanCameraWrapper
-from PIL import Image
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
@@ -79,7 +79,7 @@ class RCSPickUpCubeEval(EvaluatorEnv):
             cameras=dict(rgb_side=side, rgb_wrist=wrist),
             # cameras=dict(rgb_side=side),
             gripper=obs["gripper"],
-            info=dict(joints=obs["joints"])
+            info=dict(joints=obs["joints"]),
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
@@ -248,7 +248,6 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
             # skip images that have timestamps closer together than 0.5s
             imgs.append(Image.fromarray(img[camera]))
 
-
         imgs[0].save(
             f"{os.environ['CAM_PATH']}/{i}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
             save_all=True,
@@ -256,7 +255,6 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
             duration=0.2 * 1000,
             loop=0,
         )
-
 
     env.reset(options={})
     logging.debug(
