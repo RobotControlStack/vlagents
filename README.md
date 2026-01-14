@@ -125,12 +125,11 @@ conda activate vjepa2
 ```
 Clone the repo and install it.
 ```shell
-git clone git@github.com:nisarganc/vjepa2.git
+git clone git@github.com:facebookresearch/vjepa2.git
 cd vjepa2
 pip install -e .
 
 pip install git+https://github.com/juelg/agents.git
-git checkout nilavadi/vjepa-ac
 pip install -ve .
 
 ```
@@ -148,13 +147,7 @@ python -m agents start-server openvla --host localhost --port 8080 --kwargs '{"c
 python -m agents start-server openpi --port=8080 --host=localhost --kwargs='{"checkpoint_path": "<path to checkpoint>/{checkpoint_step}", "model_name": "pi0_rcs", "checkpoint_step": <checkpoint_step>}' # leave "{checkpoint_step}" it will be replaced, "model_name" is the key for the training config
 
 # vjepa2-ac
-python -m agents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/utn-robot.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
-```
-
-### RCS run commands
-```shell
-# openpi
-/home/juelg/miniconda3/envs/rcs_openpi/bin/python -m agents start-server openpi --port=20997 --host=0.0.0.0 --kwargs='{"checkpoint_path": "/mnt/dataset_drive/juelg/checkpoints/rcs_paper/pi0/pi0_rcs_utn/openpi_utn_wrist/{checkpoint_step}", "model_name": "pi0_rcs_utn", "checkpoint_step": 29999}' # leave "{checkpoint_step}" it will be replaced, "model_name" is the key for the training config
+python -m agents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/<your_config>.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
 ```
 
 

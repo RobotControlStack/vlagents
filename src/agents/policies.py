@@ -149,7 +149,7 @@ class VjepaAC(Agent):
     def initialize(self):
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
-        from inference.utils.world_model_wrapper import WorldModel
+        from notebooks.utils.world_model_wrapper import WorldModel
 
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", "exp_1.png")
