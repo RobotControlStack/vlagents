@@ -10,7 +10,7 @@ import json_numpy
 import rpyc
 
 from agents.client import dataclass_from_dict
-from agents.policies import Agent, Obs, SharedMemoryPayload
+from agents.policies import Agent, CameraDataType, Obs, SharedMemoryPayload
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
@@ -51,7 +51,7 @@ class AgentService(rpyc.Service):
         assert self._is_initialized, "AgentService not initialized, wait until is_initialized is True"
         # action, done, info
         obs = typing.cast(Obs, dataclass_from_dict(Obs, json_numpy.loads(obs_bytes)))
-        if obs.camera_data_in_shared_memory:
+        if obs.camera_data_type == CameraDataType.SHARED_MEMORY:
             obs.cameras = {
                 camera_name: dataclass_from_dict(SharedMemoryPayload, camera_data)
                 for camera_name, camera_data in obs.cameras.items()
@@ -64,7 +64,7 @@ class AgentService(rpyc.Service):
         # info
         obs, instruction, kwargs = json_numpy.loads(args)
         obs_dclass = typing.cast(Obs, dataclass_from_dict(Obs, obs))
-        if obs_dclass.camera_data_in_shared_memory:
+        if obs_dclass.camera_data_type == CameraDataType.SHARED_MEMORY:
             obs_dclass.cameras = {
                 camera_name: dataclass_from_dict(SharedMemoryPayload, camera_data)
                 for camera_name, camera_data in obs_dclass.cameras.items()
