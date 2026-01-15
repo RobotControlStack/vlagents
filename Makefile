@@ -20,7 +20,10 @@ mypy:
 test:
 	pytest ${PYSRC} -vv
 
+bump:
+	cz bump
+
 commit:
 	cz commit
 
-.PHONY: checkformat format lint ruff mypy pytest commit
+.PHONY: checkformat format lint ruff mypy pytest bump commit

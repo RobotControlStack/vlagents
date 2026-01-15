@@ -24,6 +24,14 @@ authors = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
 requires-python = ">=3.10"
 license = "Apache-2.0"
 
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/RobotControlStack/vlagents"
+Issues = "https://github.com/RobotControlStack/vlagents/issues"
+
 
 [project.optional-dependencies]
 dev = [
@@ -105,3 +113,12 @@ pretty = true
 minversion = "6.0"
 addopts = "-vv"
 testpaths = ["tests"]
+
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+update_changelog_on_bump = true
+major_version_zero = true
