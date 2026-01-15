@@ -16,6 +16,7 @@ dependencies = [
   "wandb",
   "pillow",
   "tqdm",
+  "simplejpeg",
 ]
 readme = "README.md"
 maintainers = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]

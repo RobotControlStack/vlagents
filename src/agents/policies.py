@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Union
 
 import numpy as np
+import simplejpeg
 from PIL import Image
 
 
@@ -22,12 +23,18 @@ class SharedMemoryPayload:
     dtype: str = "uint8"
 
 
+class CameraDataType:
+    SHARED_MEMORY = "shared_memory"
+    JPEG_ENCODED = "jpeg_encoded"
+    RAW = "raw"
+
+
 @dataclass(kw_only=True)
 class Obs:
-    cameras: dict[str, np.ndarray | SharedMemoryPayload] = field(default_factory=dict)
+    cameras: dict[str, np.ndarray | SharedMemoryPayload | str] = field(default_factory=dict)
+    camera_data_type: str = CameraDataType.RAW
     gripper: float | None = None
     info: dict[str, Any] = field(default_factory=dict)
-    camera_data_in_shared_memory: bool = False
 
 
 @dataclass(kw_only=True)
@@ -53,9 +60,9 @@ class Agent:
         # heavy initialization, e.g. loading models
         pass
 
-    def _from_shared_memory(self, obs: Obs) -> Obs:
+    def _to_numpy(self, obs: Obs) -> Obs:
         """transparently uses shared memory if configured and modifies obs in place"""
-        if obs.camera_data_in_shared_memory:
+        if obs.camera_data_type == CameraDataType.SHARED_MEMORY:
             camera_dict = {}
             for camera_name, camera_data in obs.cameras.items():
                 assert isinstance(camera_data, SharedMemoryPayload)
@@ -65,12 +72,19 @@ class Agent:
                     camera_data.shape, dtype=camera_data.dtype, buffer=self._shm[camera_data.shm_name].buf
                 )
             obs.cameras = camera_dict
+        elif obs.camera_data_type == CameraDataType.JPEG_ENCODED:
+            camera_dict = {}
+            for camera_name, camera_data in obs.cameras.items():
+                assert isinstance(camera_data, str)
+                camera_dict[camera_name] = simplejpeg.decode_jpeg(base64.urlsafe_b64decode(camera_data))
+            obs.cameras = camera_dict
+        obs.camera_data_type = CameraDataType.RAW
         return obs
 
     def act(self, obs: Obs) -> Act:
         assert self.instruction is not None, "forgot reset?"
         self.step += 1
-        self._from_shared_memory(obs)
+        self._to_numpy(obs)
 
         return Act(action=np.zeros(7, dtype=np.float32), done=False, info={})
 
@@ -79,7 +93,7 @@ class Agent:
         self.step = 0
         self.episode += 1
         self.instruction = instruction
-        self._from_shared_memory(obs)
+        self._to_numpy(obs)
         # info
         return {}
 
