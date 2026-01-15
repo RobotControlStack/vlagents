@@ -36,11 +36,11 @@ class ClientAgent(RemoteAgent):
             return Obs(cameras=dict(rgb_side=base64.urlsafe_b64encode(side_bytes.getvalue()).decode("utf-8"), rgb_wrist=base64.urlsafe_b64encode(wrist_bytes.getvalue()).decode("utf-8")),
                     gripper=obs["gripper"], info=dict(joints=obs["joints"]))
 
-    def load_obs(self, imgs_path_dict):
+    def load_obs(self, imgs_path_dict, images_size):
         obs = {}
-        side = np.array(Image.open(imgs_path_dict["side"]))
+        side = np.array(Image.open(imgs_path_dict["side"]).resize((images_size[1], images_size[0])))
         print("side shape", side.shape)
-        wrist = np.array(Image.open(imgs_path_dict["wrist"]))
+        wrist = np.array(Image.open(imgs_path_dict["wrist"]).resize((images_size[1], images_size[0])))
         print("wrist shape", wrist.shape)
         print(side.min(), side.max(), wrist.min(), wrist.max())
         # example obs
@@ -55,9 +55,9 @@ class ClientAgent(RemoteAgent):
         return obs
 
     # run round trip 1000 time and save average time max and min time
-    def benchmark(self, imgs_path_dict, runs: int = 1000):
+    def benchmark(self, imgs_path_dict, images_size, runs: int = 1000):
         times = []
-        obs = self.load_obs(imgs_path_dict)
+        obs = self.load_obs(imgs_path_dict, images_size)
         obs_struct = self.get_obs(obs)
         self.reset(obs_struct, instruction="pick and place", on_same_machine=self.on_same_machine)
         for _ in tqdm(range(runs)):
@@ -73,10 +73,11 @@ class ClientAgent(RemoteAgent):
         print(f"Average time for get_obs and act() over {runs} runs: {avg_time:.4f} seconds")
         print(f"Max time for get_obs and act(): {max_time:.4f} seconds")
         print(f"Min time for get_obs and act(): {min_time:.4f} seconds")
+        print("standard deviation:", np.std(np.array(times)))
 
 if __name__ == "__main__":
     port = 20997
-    local = True
+    local = False
     if local == True:
     # test local connection
         host = "localhost"
@@ -91,5 +92,11 @@ if __name__ == "__main__":
         "side": "/home/gamal/RobotControlStack/imgs/side_observer_30.png",
         "wrist": "/home/gamal/RobotControlStack/imgs/side_right_30.png"
     }
+    image_size = (224, 224, 3)
+    #image_size = (720, 1280, 3)
+    # Create the client agent and run the benchmark
+    print("VLAgent")
+    print("on_same_machine:", on_same_machine)
+    print("image size:", image_size)
     client_agent = ClientAgent(host=host, port=port, model=model, on_same_machine=on_same_machine)
-    client_agent.benchmark(imgs_path_dict, runs=1000)
+    client_agent.benchmark(imgs_path_dict, image_size, runs=1000)
