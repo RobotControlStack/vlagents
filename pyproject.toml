@@ -22,8 +22,7 @@ readme = "README.md"
 maintainers = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
 authors = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
 requires-python = ">=3.10"
-license       = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
 
 
 [project.optional-dependencies]
