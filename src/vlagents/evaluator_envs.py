@@ -202,10 +202,20 @@ EvaluatorEnv.register("PokeCube-v1", ManiSkill)
 
 class Libero(EvaluatorEnv):
 
-    def __init__(self, env_id: str, seed: int, **env_kwargs) -> None:
+    def __init__(self, env_id: str, seed: int, reset_steps: int = 14, **env_kwargs) -> None:
+        """
+        For supported env_kwargs checkout ControlEnv class in libero.
+        We add the following env_kwargs on top:
+        - task_id (int): libero task id for given task suite. The number of tasks per task suite can checked with Libero.n_tasks(env_id). Defaults to 0.
+        - control_mode (str): either 'relative' or 'absolute'. Defaults to 'relative'.
+
+        """
         logging.info("Creating Libero env")
+        self.env_kwargs = env_kwargs
+        self.reset_steps = reset_steps
+        self.control_mode = self.env_kwargs.pop("control_mode", "relative")
         self.env, self._language_instruction, self.task_name, self.task_suite, self.task_id, self.task = self._make_gym(
-            env_id, seed, **env_kwargs
+            env_id, seed, **self.env_kwargs
         )
         logging.info(
             f"Created Libero env, task suite: {env_id}, task id: {self.task_id}, task name {self.task_name}, instruction: {self._language_instruction}"
@@ -213,7 +223,16 @@ class Libero(EvaluatorEnv):
         self.env_id = env_id
         self.seed = seed
 
-    def _make_gym(self, env_id, seed, **env_kwargs):
+    @staticmethod
+    def n_tasks(env_id: str) -> int:
+        from libero.libero import benchmark, get_libero_path
+
+        benchmark_dict = benchmark.get_benchmark_dict()
+        task_suite = benchmark_dict[env_id]()
+        return task_suite.n_tasks
+
+    @staticmethod
+    def _make_gym(env_id, seed, **env_kwargs):
         from libero.libero import benchmark, get_libero_path
         from libero.libero.envs import OffScreenRenderEnv
 
@@ -229,29 +248,48 @@ class Libero(EvaluatorEnv):
             **env_kwargs,
         )
         env.seed(seed)
+
         return env, task.language, task.name, task_suite, task_id, task
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
         return Obs(
-            cameras=dict(rgb_side=obs["agentview_image"]),
+            cameras=dict(rgb_side=obs["agentview_image"][::-1], rgb_wrist=obs["robot0_eye_in_hand_image"][::-1]),
             gripper=obs["robot0_gripper_qpos"] / 0.04,  # normalize
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
         # change gripper to libero format (-1, 1) where -1 is open
-        action.action[-1] = (1 - action.action[-1]) * 2 - 1.0
-        obs, reward, done, info = self.env.step(action.action)
-        return self.translate_obs(obs), reward, done, done, info
+        act = np.copy(action.action)
+        act[-1] = (1 - act[-1]) * 2 - 1.0
+        obs, reward, done, info = self.env.step(act)
+        success = self.env.check_success()
+        return self.translate_obs(obs), reward, success, done, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
-        obs, info = self.env.reset()
+        obs = self.env.reset()
         init_states = self.task_suite.get_task_init_states(
             self.task_id
         )  # for benchmarking purpose, we fix the a set of initial states
         init_state_id = 0
         self.env.set_init_state(init_states[init_state_id])
 
-        return self.translate_obs(obs), info
+        for robot in self.env.robots:
+            robot.controller.use_delta = True
+        for _ in range(self.reset_steps):
+            obs, _, _, _ = self.env.step(
+                np.zeros(8) if "JOINT" in self.env_kwargs.get("controller", "OSC_POSE") else np.zeros(7)
+            )
+
+        if self.control_mode == "absolute":
+            for robot in self.env.robots:
+                robot.controller.use_delta = False
+        elif self.control_mode == "relative":
+            for robot in self.env.robots:
+                robot.controller.use_delta = True
+        else:
+            raise ValueError(f"Invalid control mode: {self.control_mode}, use 'absolute' or 'relative'.")
+
+        return self.translate_obs(obs), {}
 
     @property
     def language_instruction(self) -> str:
@@ -285,11 +323,11 @@ class AgentConfig:
 
 
 def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[list[float], list[float], list[float]]:
-    logging.debug(f"Starting evaluation of {env.env.unwrapped.spec.id}")
+    logging.debug(f"Starting evaluation")
     obs, _ = env.reset(options={})
-    logging.debug(f"Reset env {env.env.unwrapped.spec.id}")
+    logging.debug(f"Reset env")
     agent.reset(obs, env.language_instruction)
-    logging.debug(f"Reset agent {env.env.unwrapped.spec.id}")
+    logging.debug(f"Reset agent")
     done = False
     truncated = False
     step = 0.0
@@ -320,9 +358,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
         )
 
     env.reset(options={})
-    logging.debug(
-        f"Finished evaluation of {env.env.unwrapped.spec.id} with {step} steps and reward {reward}, success {done}"
-    )
+    logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
     # success, last reward and number of steps
     return done, rewards, step
 
@@ -441,7 +477,6 @@ def evaluation(
         with start_server(
             agent_cfg.agent_name, agent_cfg.agent_kwargs, agent_cfg.port, agent_cfg.host, agent_cfg.python_path
         ):
-            sleep(30)
             res = multi_eval(agent_cfg, eval_cfgs, episodes, n_processes)
     except Exception:
         # Ensures you SEE the client's stack trace and any logged errors.
@@ -458,44 +493,7 @@ def evaluation(
     return res
 
 
-def run_eval_during_training(
-    agent_cfg: AgentConfig,
-    eval_cfgs: list[EvalConfig],
-    wandb_id: str,
-    wandb_entity: str,
-    wandb_group: str,
-    wandb_project: str,
-    wandb_note: str,
-    wandb_name: str,
-    slurm: Slurm,
-    output_path: str,
-    wandb_first: bool = False,
-    episodes: int = 100,
-    n_processes: int | None = None,
-    cmd=None,
-):
-    if cmd is None:
-        cmd = ["python"]
-    cmd += [
-        "-m",
-        "vlagents" "run-eval-during-training",
-        f"--agent-cfg={json.dumps(asdict(agent_cfg))}" f"--episodes={episodes}",
-        f"--n-processes={n_processes}",
-        f"--eval-cfgs={json.dumps([asdict(cfg) for cfg in eval_cfgs])}",
-        f"--wandb-id={wandb_id}",
-        f"--wandb-group={wandb_group.replace(':', '_')}",
-        f"--wandb-project={wandb_project}",
-        f"--wandb-entity={wandb_entity}",
-        f"--wandb-note={wandb_note}",
-        f"--wandb-name={wandb_name}",
-        f"--output-path={output_path}",
-    ]
-    if wandb_first:
-        cmd.append("--wandb-first")
-    slurm.sbatch(shlex.join(cmd))
-
-
-def run_eval_post_training(
+def run_eval(
     agent_cfg: AgentConfig,
     eval_cfgs: list[EvalConfig],
     wandb_entity: str,
