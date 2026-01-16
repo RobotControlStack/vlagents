@@ -343,7 +343,7 @@ class OpenPiModel(Agent):
         )
         action_chunk = self.policy.infer(observation)["actions"]
 
-        # convert gripper action into agents format
+        # convert gripper action into vlagents format
         action_chunk[:, -1] = 1 - action_chunk[:, -1]
         self._cached_action_chunk = action_chunk
 

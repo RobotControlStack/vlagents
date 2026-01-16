@@ -3,9 +3,9 @@ from time import sleep
 
 import numpy as np
 
-from agents.client import RemoteAgent
-from agents.evaluator_envs import start_server
-from agents.policies import Act, Obs
+from vlagents.client import RemoteAgent
+from vlagents.evaluator_envs import start_server
+from vlagents.policies import Act, Obs
 
 
 def _test_connection(agent: RemoteAgent):

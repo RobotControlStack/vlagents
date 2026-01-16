@@ -9,8 +9,8 @@ from threading import Thread
 import json_numpy
 import rpyc
 
-from agents.client import dataclass_from_dict
-from agents.policies import Agent, CameraDataType, Obs, SharedMemoryPayload
+from vlagents.client import dataclass_from_dict
+from vlagents.policies import Agent, CameraDataType, Obs, SharedMemoryPayload
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",

@@ -1,5 +1,5 @@
-# Agents
-Agents is a python library that allows to separate next action prediction from policy networks from action execution in simulated or real environments.
+# VLAgents
+VLAgents is a python library that allows to separate next action prediction from policy networks from action execution in simulated or real environments.
 It defines an interface for policies and for environments.
 The policies run independent in their own virtual environment, potentially on a different computer, and can be queried for an action (in principle similar to the chatgpt api).
 
@@ -15,18 +15,18 @@ The work also includes a section on related engineering challenges regarding jax
 
 ### Local Installation
 ```shell
-git clone https://github.com/juelg/agents.git
-cd agents
+git clone https://github.com/juelg/vlagents.git
+cd vlagents
 pip install -ve .
 ```
 
 ### Repo Installation
 ```shell
-pip install git+https://github.com/juelg/agents.git
+pip install git+https://github.com/juelg/vlagents.git
 ```
 
 ### Environment and Policy Installation
-On top of agents you can then install a simulation environment where the agent acts.
+On top of vlagents you can then install a simulation environment where the agent acts.
 We currently support [maniskill](https://github.com/haosulab/ManiSkill) with more to come.
 In order to avoid dependency conflicts, use a second conda/pip environment to install your policy.
 We currently support [octo](https://github.com/octo-models/octo) and [openvla](https://github.com/openvla/openvla).
@@ -40,7 +40,7 @@ conda install nvidia/label/cuda-11.8.0::cuda --no-channel-priority
 conda install conda-forge::cudnn=8.9
 # octo dependencies
 pip install git+https://github.com/octo-models/octo.git@241fb3514b7c40957a86d869fecb7c7fc353f540
-pip install -r agents/utils/fixed_octo_requirements.txt
+pip install -r vlagents/utils/fixed_octo_requirements.txt
 # for gpu support:
 pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
@@ -54,9 +54,9 @@ print(xla_bridge.get_backend().platform)
 ```
 
 
-Install the agents library on top:
+Install the vlagents library on top:
 ```shell
-pip install git+https://github.com/juelg/agents.git
+pip install git+https://github.com/juelg/vlagents.git
 ```
 
 For more details, see the [Octo github page](https://github.com/octo-models/octo).
@@ -93,9 +93,9 @@ Install OpenVLA
 pip install git+https://github.com/openvla/openvla.git@46b752f477cc5773cc1234b2e82c0e2130e4e890
 ```
 
-Install the agents library on top:
+Install the vlagents library on top:
 ```shell
-pip install git+https://github.com/juelg/agents.git
+pip install git+https://github.com/juelg/vlagents.git
 ```
 
 For more details, see the [OpenVLA github page](https://github.com/openvla/openvla).
@@ -129,25 +129,25 @@ git clone git@github.com:facebookresearch/vjepa2.git
 cd vjepa2
 pip install -e .
 
-pip install git+https://github.com/juelg/agents.git
+pip install git+https://github.com/juelg/vlagents.git
 pip install -ve .
 
 ```
 
 ## Usage
-To start an agents server use the `start-server` command where `kwargs` is a dictionary of the constructor arguments of the policy you want to start e.g.
+To start an vlagents server use the `start-server` command where `kwargs` is a dictionary of the constructor arguments of the policy you want to start e.g.
 ```shell
 # octo
-python -m agents start-server octo --host localhost --port 8080 --kwargs '{"checkpoint_path": "hf://Juelg/octo-base-1.5-finetuned-maniskill", "checkpoint_step": None, "horizon": 1, "unnorm_key": []}'
+python -m vlagents start-server octo --host localhost --port 8080 --kwargs '{"checkpoint_path": "hf://Juelg/octo-base-1.5-finetuned-maniskill", "checkpoint_step": None, "horizon": 1, "unnorm_key": []}'
 
 # openvla
-python -m agents start-server openvla --host localhost --port 8080 --kwargs '{"checkpoint_path": "Juelg/openvla-7b-finetuned-maniskill", "device": "cuda:0", "attn_implementation": "flash_attention_2", "unnorm_key": "maniskill_human:7.0.0", "checkpoint_step": 40000}'
+python -m vlagents start-server openvla --host localhost --port 8080 --kwargs '{"checkpoint_path": "Juelg/openvla-7b-finetuned-maniskill", "device": "cuda:0", "attn_implementation": "flash_attention_2", "unnorm_key": "maniskill_human:7.0.0", "checkpoint_step": 40000}'
 
 # openpi
-python -m agents start-server openpi --port=8080 --host=localhost --kwargs='{"checkpoint_path": "<path to checkpoint>/{checkpoint_step}", "model_name": "pi0_rcs", "checkpoint_step": <checkpoint_step>}' # leave "{checkpoint_step}" it will be replaced, "model_name" is the key for the training config
+python -m vlagents start-server openpi --port=8080 --host=localhost --kwargs='{"checkpoint_path": "<path to checkpoint>/{checkpoint_step}", "model_name": "pi0_rcs", "checkpoint_step": <checkpoint_step>}' # leave "{checkpoint_step}" it will be replaced, "model_name" is the key for the training config
 
 # vjepa2-ac
-python -m agents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/<your_config>.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
+python -m vlagents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/<your_config>.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
 ```
 
 
@@ -159,12 +159,12 @@ In both cases environment and arguments as well as policy and arguments and wand
 ## Contribution
 
 ### New Policy
-In order to extend the library with a new policy network, extend the `Agent` class in [policies.py](src/agents/policies.py).
+In order to extend the library with a new policy network, extend the `Agent` class in [policies.py](src/vlagents/policies.py).
 It is important to only invoke policy specific imports in the class functions, as each policy can have its own dependencies.
 
 
 ### New Environment
-In order to extend the library with a new agent environment, extend the `EvaluatorEnv` class in [evaluator_envs.py](src/agents/evaluator_envs.py).
+In order to extend the library with a new agent environment, extend the `EvaluatorEnv` class in [evaluator_envs.py](src/vlagents/evaluator_envs.py).
 
 
 ### Developer Tools

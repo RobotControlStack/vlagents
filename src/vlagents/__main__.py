@@ -15,11 +15,11 @@ import wandb
 # when started from jupyter notebook
 os.environ["MPLBACKEND"] = "Agg"
 
-from agents.evaluator_envs import AgentConfig, EvalConfig, evaluation, write_results
-from agents.policies import AGENTS
-from agents.server import AgentService
+from vlagents.evaluator_envs import AgentConfig, EvalConfig, evaluation, write_results
+from vlagents.policies import AGENTS
+from vlagents.server import AgentService
 
-main_app = typer.Typer(help="CLI tool for the agents library.")
+main_app = typer.Typer(help="CLI tool for the vlagents library.")
 
 
 def wandb_log_git_diff(path: str):
