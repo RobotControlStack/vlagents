@@ -12,3 +12,4 @@ wandb
 run_logs
 .ipynb_checkpoints
 .not*
+dist

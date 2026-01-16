@@ -18,9 +18,9 @@ from PIL import Image
 from simple_slurm import Slurm
 from tqdm import tqdm
 
-from agents.client import RemoteAgent
-from agents.policies import Act, Agent, Obs
-from agents.wrappers import HumanCameraWrapper
+from vlagents.client import RemoteAgent
+from vlagents.policies import Act, Agent, Obs
+from vlagents.wrappers import HumanCameraWrapper
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
@@ -339,7 +339,7 @@ def start_server(
     cmd = [
         python_path.format(agent_name=agent_name),
         "-m",
-        "agents",
+        "vlagents",
         "start-server",
         f"{agent_name}",
         f"--port={port}",
@@ -415,7 +415,7 @@ def run_eval_during_training(
         cmd = ["python"]
     cmd += [
         "-m",
-        "agents" "run-eval-during-training",
+        "vlagents" "run-eval-during-training",
         f"--agent-cfg={json.dumps(asdict(agent_cfg))}" f"--episodes={episodes}",
         f"--n-processes={n_processes}",
         f"--eval-cfgs={json.dumps([asdict(cfg) for cfg in eval_cfgs])}",
@@ -452,7 +452,7 @@ def run_eval_post_training(
         shlex.join(
             [
                 "-m",
-                "agents",
+                "vlagents",
                 "run-eval-post-training",
                 f"--agent-cfg={json.dumps(asdict(agent_cfg))}",
                 f"--episodes={episodes}",

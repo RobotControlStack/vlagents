@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agents"
+name = "vlagents"
 version = "0.0.1"
 description = "Modular VLA and Environment interfaces."
 dependencies = [

@@ -9,7 +9,7 @@ import numpy as np
 import rpyc
 import simplejpeg
 
-from agents.policies import Act, Agent, CameraDataType, Obs, SharedMemoryPayload
+from vlagents.policies import Act, Agent, CameraDataType, Obs, SharedMemoryPayload
 
 
 def dataclass_from_dict(klass, d):
