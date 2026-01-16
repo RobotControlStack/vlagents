@@ -276,6 +276,7 @@ class Libero(EvaluatorEnv):
         for robot in self.env.robots:
             robot.controller.use_delta = True
         for _ in range(self.reset_steps):
+            # steps the environment to filter out falling objects
             obs, _, _, _ = self.env.step(
                 np.zeros(8) if "JOINT" in self.env_kwargs.get("controller", "OSC_POSE") else np.zeros(7)
             )
@@ -309,7 +310,9 @@ class EvalConfig:
     env_id: str
     env_kwargs: dict[str, Any]
     max_steps_per_episode: int = 100
-    # TODO: add seed, on same machine and jpeg encoding
+    seed: int = 42
+    same_machine: bool = False
+    jpeg_encoding: bool = False
 
 
 @dataclass
@@ -373,7 +376,13 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> t
         logging.info(f"env {cfg.env_id} not available, creating new env and agent")
         env = EvaluatorEnv.make(cfg.env_id, seed=seed, **cfg.env_kwargs)
         logging.info("done creating env")
-        agent = RemoteAgent(agent_config.host, agent_config.port, agent_config.agent_name)
+        agent = RemoteAgent(
+            agent_config.host,
+            agent_config.port,
+            agent_config.agent_name,
+            on_same_machine=cfg.same_machine,
+            jpeg_encoding=cfg.jpeg_encoding,
+        )
         logging.info("done creating agent")
         per_process_cache[key] = (env, agent)
     return per_process_cache[key]
@@ -402,7 +411,7 @@ def multi_eval(
     #     single_results = p.map(run_episode, args)
 
     # without process
-    np.random.seed(42)
+    np.random.seed(cfgs[0].seed)
     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
     single_results = [run_episode(arg) for arg in tqdm(args)]
 
