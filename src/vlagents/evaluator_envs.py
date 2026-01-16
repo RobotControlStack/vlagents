@@ -132,11 +132,7 @@ class ManiSkill(EvaluatorEnv):
         # TODO: one could save only every nth episode by adding an episode counter which steps the record env only
         # when the counter is divisible by n otherwise steps the normal env
         logging.info(f"Creating ManiSkill env {env_id}")
-        if "video_dir" in env_kwargs:
-            output_dir = env_kwargs["video_dir"]
-            del env_kwargs["video_dir"]
-        else:
-            output_dir = None
+        output_dir = env_kwargs.pop("video_dir", None)
         super().__init__(env_id, seed, **env_kwargs)
         logging.info(f"Created ManiSkill env {env_id}")
         if "human_render_camera_configs" in env_kwargs:
@@ -204,11 +200,78 @@ EvaluatorEnv.register("StackCube-v1", ManiSkill)
 EvaluatorEnv.register("PokeCube-v1", ManiSkill)
 
 
+class Libero(EvaluatorEnv):
+
+    def __init__(self, env_id: str, seed: int, **env_kwargs) -> None:
+        logging.info("Creating Libero env")
+        self.env, self._language_instruction, self.task_name, self.task_suite, self.task_id, self.task = self._make_gym(
+            env_id, seed, **env_kwargs
+        )
+        logging.info(
+            f"Created Libero env, task suite: {env_id}, task id: {self.task_id}, task name {self.task_name}, instruction: {self._language_instruction}"
+        )
+        self.env_id = env_id
+        self.seed = seed
+
+    def _make_gym(self, env_id, seed, **env_kwargs):
+        from libero.libero import benchmark, get_libero_path
+        from libero.libero.envs import OffScreenRenderEnv
+
+        benchmark_dict = benchmark.get_benchmark_dict()
+
+        task_suite = benchmark_dict[env_id]()
+        task_id = min(max(env_kwargs.pop("task_id", 0), 0), task_suite.n_tasks - 1)
+        task = task_suite.get_task(task_id)
+
+        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+        env = OffScreenRenderEnv(
+            bddl_file_name=task_bddl_file,
+            **env_kwargs,
+        )
+        env.seed(seed)
+        return env, task.language, task.name, task_suite, task_id, task
+
+    def translate_obs(self, obs: dict[str, Any]) -> Obs:
+        return Obs(
+            cameras=dict(rgb_side=obs["agentview_image"]),
+            gripper=obs["robot0_gripper_qpos"] / 0.04,  # normalize
+        )
+
+    def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
+        # change gripper to libero format (-1, 1) where -1 is open
+        action.action[-1] = (1 - action.action[-1]) * 2 - 1.0
+        obs, reward, done, info = self.env.step(action.action)
+        return self.translate_obs(obs), reward, done, done, info
+
+    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
+        obs, info = self.env.reset()
+        init_states = self.task_suite.get_task_init_states(
+            self.task_id
+        )  # for benchmarking purpose, we fix the a set of initial states
+        init_state_id = 0
+        self.env.set_init_state(init_states[init_state_id])
+
+        return self.translate_obs(obs), info
+
+    @property
+    def language_instruction(self) -> str:
+        return self._language_instruction
+
+
+EvaluatorEnv.register("libero_10", Libero)
+EvaluatorEnv.register("libero_90", Libero)
+EvaluatorEnv.register("libero_100", Libero)
+EvaluatorEnv.register("libero_spatial", Libero)
+EvaluatorEnv.register("libero_object", Libero)
+EvaluatorEnv.register("libero_goal", Libero)
+
+
 @dataclass
 class EvalConfig:
     env_id: str
     env_kwargs: dict[str, Any]
     max_steps_per_episode: int = 100
+    # TODO: add seed, on same machine and jpeg encoding
 
 
 @dataclass

@@ -28,9 +28,20 @@ pip install -ve .
 
 ### Environment and Policy Installation
 On top of vlagents you can then install a simulation environment where the agent acts.
-We currently support [maniskill](https://github.com/haosulab/ManiSkill) with more to come.
+We currently the following environments:
+- [maniskill](https://github.com/haosulab/ManiSkill)
+- [robot control stack](https://github.com/RobotControlStack/robot-control-stack)
+- [libero](https://github.com/Lifelong-Robot-Learning/LIBERO)
+
+
 In order to avoid dependency conflicts, use a second conda/pip environment to install your policy.
-We currently support [octo](https://github.com/octo-models/octo) and [openvla](https://github.com/openvla/openvla).
+We currently support the following policies:
+- [octo](https://github.com/octo-models/octo)
+- [openvla](https://github.com/openvla/openvla)
+- [openpi](https://github.com/Physical-Intelligence/openpi)
+- [vjepa2-ac](https://github.com/facebookresearch/vjepa2)
+- [diffusion policy](https://github.com/real-stanford/diffusion_policy)
+
 
 ### Octo
 To use Octo as an agent/policy you need to create a new conda environment:
@@ -134,6 +145,9 @@ pip install git+https://github.com/juelg/vlagents.git
 pip install -ve .
 
 ```
+
+### Diffusion Policy
+Currently located on the branch `diffusion_policy`.
 
 ## Usage
 To start an vlagents server use the `start-server` command where `kwargs` is a dictionary of the constructor arguments of the policy you want to start e.g.
