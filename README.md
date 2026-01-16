@@ -171,6 +171,66 @@ The `run-eval-post-training` command evaluates a range of checkpoints in paralle
 In both cases environment and arguments as well as policy and arguments and wandb config for logging can be passed as CLI arguments.
 
 
+## Adding your own environment
+```python
+from vlagents.evaluator_envs import EvaluatorEnv, Obs, Act
+from typing import Any
+
+class YourEnv(EvaluatorEnv):
+
+    def translate_obs(self, obs: dict[str, Any]) -> Obs:
+        # translated your observation
+        return Obs()
+
+    def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
+        # step your env
+        obs, reward, success, truncated, info = self.env.step(action)
+        return self.translate_obs(obs), reward, success, truncated, info
+
+    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
+        obs, info = self.env.reset()
+        return self.translate_obs(obs), info
+
+    @property
+    def language_instruction(self) -> str:
+        # return task instruction
+        return "pick up the cube"
+
+    @staticmethod
+    def do_import():
+        # do imports required by your env
+        import libero
+
+EvaluatorEnv.register("your-env-id", YourEnv)
+```
+
+## Adding your own policy
+```python
+from vlagents.policies import Agent, AGENTS
+from vlagents.evaluator_envs import Obs, Act
+from typing import Any
+import numpy as np
+
+class YourAgent(Agent):
+    def initialize(self):
+        # heavy initialization, e.g. loading models
+        pass
+
+    def act(self, obs: Obs) -> Act:
+        # your forward pass
+        return Act(action=np.zeros(7, dtype=np.float32), done=False, info={})
+
+    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        # reset model if it has state and return info dict
+        return {}
+
+    def close(self, *args, **kwargs):
+        pass
+AGENTS["your-agent-id"] = YourAgent
+```
+
+
+
 ## Contribution
 
 ### New Policy
