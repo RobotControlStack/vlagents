@@ -2,8 +2,8 @@ PYSRC = src
 
 # Python
 checkformat:
-	isort --check-only ${PYSRC}
-	black --check ${PYSRC}
+	isort --check-only ${PYSRC}/vlagents
+	black --check ${PYSRC}/vlagents
 
 format:
 	isort ${PYSRC}

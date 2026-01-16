@@ -13,23 +13,35 @@ The work also includes a section on related engineering challenges regarding jax
 
 ## Installation
 
+### Pip Installation (Recommended)
+```shell
+pip install vlagents
+```
+
 ### Local Installation
 ```shell
-git clone https://github.com/juelg/vlagents.git
+git clone https://https://github.com/RobotControlStack/vlagents.git
 cd vlagents
 pip install -ve .
 ```
 
-### Repo Installation
-```shell
-pip install git+https://github.com/juelg/vlagents.git
-```
 
 ### Environment and Policy Installation
 On top of vlagents you can then install a simulation environment where the agent acts.
-We currently support [maniskill](https://github.com/haosulab/ManiSkill) with more to come.
+We currently the following environments:
+- [maniskill](https://github.com/haosulab/ManiSkill)
+- [robot control stack](https://github.com/RobotControlStack/robot-control-stack)
+- [libero](https://github.com/Lifelong-Robot-Learning/LIBERO)
+
+
 In order to avoid dependency conflicts, use a second conda/pip environment to install your policy.
-We currently support [octo](https://github.com/octo-models/octo) and [openvla](https://github.com/openvla/openvla).
+We currently support the following policies:
+- [octo](https://github.com/octo-models/octo)
+- [openvla](https://github.com/openvla/openvla)
+- [openpi](https://github.com/Physical-Intelligence/openpi)
+- [vjepa2-ac](https://github.com/facebookresearch/vjepa2)
+- [diffusion policy](https://github.com/real-stanford/diffusion_policy)
+
 
 ### Octo
 To use Octo as an agent/policy you need to create a new conda environment:
@@ -134,6 +146,9 @@ pip install -ve .
 
 ```
 
+### Diffusion Policy
+Currently located on the branch `diffusion_policy`.
+
 ## Usage
 To start an vlagents server use the `start-server` command where `kwargs` is a dictionary of the constructor arguments of the policy you want to start e.g.
 ```shell
@@ -190,9 +205,8 @@ If you find the agent useful for your work, please consider citing the original 
 ```
 @inproceedings{juelg2025refinedpolicydistillationvla,
     title={{Refined Policy Distillation}: {F}rom {VLA} Generalists to {RL} Experts}, 
-    author={Tobias Jülg and Wolfram Burgard and Florian Walter},
+    author={Tobias J{\"u}lg and Wolfram Burgard and Florian Walter},
     year={2025},
     booktitle={Proc.~of the IEEE/RSJ Int.~Conf.~on Intelligent Robots and Systems (IROS)},
-    note={Accepted for publication.}
 }
 ```

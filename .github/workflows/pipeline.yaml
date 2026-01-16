@@ -37,7 +37,7 @@ jobs:
           path: dist/
 
   upload_pypi:
-    needs: [build_dist]
+    needs: [pipeline]
     runs-on: ubuntu-latest
     # Upload to PyPI on release
     if: always() && github.event_name == 'release' && github.event.action == 'published'
