@@ -13,17 +13,18 @@ The work also includes a section on related engineering challenges regarding jax
 
 ## Installation
 
+### Pip Installation (Recommended)
+```shell
+pip install vlagents
+```
+
 ### Local Installation
 ```shell
-git clone https://github.com/juelg/vlagents.git
+git clone https://https://github.com/RobotControlStack/vlagents.git
 cd vlagents
 pip install -ve .
 ```
 
-### Repo Installation
-```shell
-pip install git+https://github.com/juelg/vlagents.git
-```
 
 ### Environment and Policy Installation
 On top of vlagents you can then install a simulation environment where the agent acts.
@@ -190,9 +191,8 @@ If you find the agent useful for your work, please consider citing the original 
 ```
 @inproceedings{juelg2025refinedpolicydistillationvla,
     title={{Refined Policy Distillation}: {F}rom {VLA} Generalists to {RL} Experts}, 
-    author={Tobias Jülg and Wolfram Burgard and Florian Walter},
+    author={Tobias J{\"u}lg and Wolfram Burgard and Florian Walter},
     year={2025},
     booktitle={Proc.~of the IEEE/RSJ Int.~Conf.~on Intelligent Robots and Systems (IROS)},
-    note={Accepted for publication.}
 }
 ```
