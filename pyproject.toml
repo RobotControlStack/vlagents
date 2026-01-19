@@ -3,8 +3,8 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agents"
-version = "0.0.1"
+name = "vlagents"
+version = "0.1.0"
 description = "Modular VLA and Environment interfaces."
 dependencies = [
   "rpyc",
@@ -16,13 +16,21 @@ dependencies = [
   "wandb",
   "pillow",
   "tqdm",
+  "simplejpeg",
 ]
 readme = "README.md"
 maintainers = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
 authors = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
 requires-python = ">=3.10"
-license       = "AGPL-3.0-or-later"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+
+classifiers = [
+    "Programming Language :: Python :: 3",
+]
+
+[project.urls]
+Homepage = "https://github.com/RobotControlStack/vlagents"
+Issues = "https://github.com/RobotControlStack/vlagents/issues"
 
 
 [project.optional-dependencies]
@@ -105,3 +113,12 @@ pretty = true
 minversion = "6.0"
 addopts = "-vv"
 testpaths = ["tests"]
+
+
+[tool.commitizen]
+name = "cz_conventional_commits"
+tag_format = "v$version"
+version_scheme = "pep440"
+version_provider = "pep621"
+update_changelog_on_bump = true
+major_version_zero = true

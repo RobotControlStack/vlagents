@@ -18,9 +18,9 @@ from PIL import Image
 from simple_slurm import Slurm
 from tqdm import tqdm
 
-from agents.client import RemoteAgent
-from agents.policies import Act, Agent, Obs
-from agents.wrappers import HumanCameraWrapper
+from vlagents.client import RemoteAgent
+from vlagents.policies import Act, Agent, Obs
+from vlagents.wrappers import HumanCameraWrapper
 
 logging.basicConfig(
     format="%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s",
@@ -132,11 +132,7 @@ class ManiSkill(EvaluatorEnv):
         # TODO: one could save only every nth episode by adding an episode counter which steps the record env only
         # when the counter is divisible by n otherwise steps the normal env
         logging.info(f"Creating ManiSkill env {env_id}")
-        if "video_dir" in env_kwargs:
-            output_dir = env_kwargs["video_dir"]
-            del env_kwargs["video_dir"]
-        else:
-            output_dir = None
+        output_dir = env_kwargs.pop("video_dir", None)
         super().__init__(env_id, seed, **env_kwargs)
         logging.info(f"Created ManiSkill env {env_id}")
         if "human_render_camera_configs" in env_kwargs:
@@ -204,11 +200,119 @@ EvaluatorEnv.register("StackCube-v1", ManiSkill)
 EvaluatorEnv.register("PokeCube-v1", ManiSkill)
 
 
+class Libero(EvaluatorEnv):
+
+    def __init__(self, env_id: str, seed: int, reset_steps: int = 14, **env_kwargs) -> None:
+        """
+        For supported env_kwargs checkout ControlEnv class in libero.
+        We add the following env_kwargs on top:
+        - task_id (int): libero task id for given task suite. The number of tasks per task suite can checked with Libero.n_tasks(env_id). Defaults to 0.
+        - control_mode (str): either 'relative' or 'absolute'. Defaults to 'relative'.
+
+        """
+        logging.info("Creating Libero env")
+        self.env_kwargs = env_kwargs
+        self.reset_steps = reset_steps
+        self.control_mode = self.env_kwargs.pop("control_mode", "relative")
+        self.env, self._language_instruction, self.task_name, self.task_suite, self.task_id, self.task = self._make_gym(
+            env_id, seed, **self.env_kwargs
+        )
+        logging.info(
+            f"Created Libero env, task suite: {env_id}, task id: {self.task_id}, task name {self.task_name}, instruction: {self._language_instruction}"
+        )
+        self.env_id = env_id
+        self.seed = seed
+
+    @staticmethod
+    def n_tasks(env_id: str) -> int:
+        from libero.libero import benchmark, get_libero_path
+
+        benchmark_dict = benchmark.get_benchmark_dict()
+        task_suite = benchmark_dict[env_id]()
+        return task_suite.n_tasks
+
+    @staticmethod
+    def _make_gym(env_id, seed, **env_kwargs):
+        from libero.libero import benchmark, get_libero_path
+        from libero.libero.envs import OffScreenRenderEnv
+
+        benchmark_dict = benchmark.get_benchmark_dict()
+
+        task_suite = benchmark_dict[env_id]()
+        task_id = min(max(env_kwargs.pop("task_id", 0), 0), task_suite.n_tasks - 1)
+        task = task_suite.get_task(task_id)
+
+        task_bddl_file = os.path.join(get_libero_path("bddl_files"), task.problem_folder, task.bddl_file)
+        env = OffScreenRenderEnv(
+            bddl_file_name=task_bddl_file,
+            **env_kwargs,
+        )
+        env.seed(seed)
+
+        return env, task.language, task.name, task_suite, task_id, task
+
+    def translate_obs(self, obs: dict[str, Any]) -> Obs:
+        return Obs(
+            cameras=dict(rgb_side=obs["agentview_image"][::-1], rgb_wrist=obs["robot0_eye_in_hand_image"][::-1]),
+            gripper=obs["robot0_gripper_qpos"] / 0.04,  # normalize
+        )
+
+    def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
+        # change gripper to libero format (-1, 1) where -1 is open
+        act = np.copy(action.action)
+        act[-1] = (1 - act[-1]) * 2 - 1.0
+        obs, reward, done, info = self.env.step(act)
+        success = self.env.check_success()
+        return self.translate_obs(obs), reward, success, done, info
+
+    def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
+        obs = self.env.reset()
+        init_states = self.task_suite.get_task_init_states(
+            self.task_id
+        )  # for benchmarking purpose, we fix the a set of initial states
+        init_state_id = 0
+        self.env.set_init_state(init_states[init_state_id])
+
+        for robot in self.env.robots:
+            robot.controller.use_delta = True
+        for _ in range(self.reset_steps):
+            # steps the environment to filter out falling objects
+            obs, _, _, _ = self.env.step(
+                np.zeros(8) if "JOINT" in self.env_kwargs.get("controller", "OSC_POSE") else np.zeros(7)
+            )
+
+        if self.control_mode == "absolute":
+            for robot in self.env.robots:
+                robot.controller.use_delta = False
+        elif self.control_mode == "relative":
+            for robot in self.env.robots:
+                robot.controller.use_delta = True
+        else:
+            raise ValueError(f"Invalid control mode: {self.control_mode}, use 'absolute' or 'relative'.")
+
+        return self.translate_obs(obs), {}
+
+    @property
+    def language_instruction(self) -> str:
+        return self._language_instruction
+
+
+EvaluatorEnv.register("libero_10", Libero)
+EvaluatorEnv.register("libero_90", Libero)
+EvaluatorEnv.register("libero_100", Libero)
+EvaluatorEnv.register("libero_spatial", Libero)
+EvaluatorEnv.register("libero_object", Libero)
+EvaluatorEnv.register("libero_goal", Libero)
+
+
 @dataclass
 class EvalConfig:
     env_id: str
     env_kwargs: dict[str, Any]
     max_steps_per_episode: int = 100
+    seed: int = 42
+    same_machine: bool = False
+    jpeg_encoding: bool = False
 
 
 @dataclass
@@ -222,11 +326,11 @@ class AgentConfig:
 
 
 def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[list[float], list[float], list[float]]:
-    logging.debug(f"Starting evaluation of {env.env.unwrapped.spec.id}")
+    logging.debug(f"Starting evaluation")
     obs, _ = env.reset(options={})
-    logging.debug(f"Reset env {env.env.unwrapped.spec.id}")
+    logging.debug(f"Reset env")
     agent.reset(obs, env.language_instruction)
-    logging.debug(f"Reset agent {env.env.unwrapped.spec.id}")
+    logging.debug(f"Reset agent")
     done = False
     truncated = False
     step = 0.0
@@ -257,9 +361,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
         )
 
     env.reset(options={})
-    logging.debug(
-        f"Finished evaluation of {env.env.unwrapped.spec.id} with {step} steps and reward {reward}, success {done}"
-    )
+    logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
     # success, last reward and number of steps
     return done, rewards, step
 
@@ -274,7 +376,13 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> t
         logging.info(f"env {cfg.env_id} not available, creating new env and agent")
         env = EvaluatorEnv.make(cfg.env_id, seed=seed, **cfg.env_kwargs)
         logging.info("done creating env")
-        agent = RemoteAgent(agent_config.host, agent_config.port, agent_config.agent_name)
+        agent = RemoteAgent(
+            agent_config.host,
+            agent_config.port,
+            agent_config.agent_name,
+            on_same_machine=cfg.same_machine,
+            jpeg_encoding=cfg.jpeg_encoding,
+        )
         logging.info("done creating agent")
         per_process_cache[key] = (env, agent)
     return per_process_cache[key]
@@ -303,7 +411,7 @@ def multi_eval(
     #     single_results = p.map(run_episode, args)
 
     # without process
-    np.random.seed(42)
+    np.random.seed(cfgs[0].seed)
     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
     single_results = [run_episode(arg) for arg in tqdm(args)]
 
@@ -339,7 +447,7 @@ def start_server(
     cmd = [
         python_path.format(agent_name=agent_name),
         "-m",
-        "agents",
+        "vlagents",
         "start-server",
         f"{agent_name}",
         f"--port={port}",
@@ -378,7 +486,6 @@ def evaluation(
         with start_server(
             agent_cfg.agent_name, agent_cfg.agent_kwargs, agent_cfg.port, agent_cfg.host, agent_cfg.python_path
         ):
-            sleep(30)
             res = multi_eval(agent_cfg, eval_cfgs, episodes, n_processes)
     except Exception:
         # Ensures you SEE the client's stack trace and any logged errors.
@@ -395,44 +502,7 @@ def evaluation(
     return res
 
 
-def run_eval_during_training(
-    agent_cfg: AgentConfig,
-    eval_cfgs: list[EvalConfig],
-    wandb_id: str,
-    wandb_entity: str,
-    wandb_group: str,
-    wandb_project: str,
-    wandb_note: str,
-    wandb_name: str,
-    slurm: Slurm,
-    output_path: str,
-    wandb_first: bool = False,
-    episodes: int = 100,
-    n_processes: int | None = None,
-    cmd=None,
-):
-    if cmd is None:
-        cmd = ["python"]
-    cmd += [
-        "-m",
-        "agents" "run-eval-during-training",
-        f"--agent-cfg={json.dumps(asdict(agent_cfg))}" f"--episodes={episodes}",
-        f"--n-processes={n_processes}",
-        f"--eval-cfgs={json.dumps([asdict(cfg) for cfg in eval_cfgs])}",
-        f"--wandb-id={wandb_id}",
-        f"--wandb-group={wandb_group.replace(':', '_')}",
-        f"--wandb-project={wandb_project}",
-        f"--wandb-entity={wandb_entity}",
-        f"--wandb-note={wandb_note}",
-        f"--wandb-name={wandb_name}",
-        f"--output-path={output_path}",
-    ]
-    if wandb_first:
-        cmd.append("--wandb-first")
-    slurm.sbatch(shlex.join(cmd))
-
-
-def run_eval_post_training(
+def run_eval(
     agent_cfg: AgentConfig,
     eval_cfgs: list[EvalConfig],
     wandb_entity: str,
@@ -452,7 +522,7 @@ def run_eval_post_training(
         shlex.join(
             [
                 "-m",
-                "agents",
+                "vlagents",
                 "run-eval-post-training",
                 f"--agent-cfg={json.dumps(asdict(agent_cfg))}",
                 f"--episodes={episodes}",

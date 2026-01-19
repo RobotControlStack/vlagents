@@ -8,6 +8,8 @@ on:
   push:
     branches:
       - master
+  release:
+    types: [ published ]
 
 jobs:
   pipeline:
@@ -27,3 +29,27 @@ jobs:
       #   run: make lint
       - name: Tests
         run: make test
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  upload_pypi:
+    needs: [pipeline]
+    runs-on: ubuntu-latest
+    # Upload to PyPI on release
+    if: always() && github.event_name == 'release' && github.event.action == 'published'
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

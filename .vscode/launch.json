@@ -12,13 +12,13 @@
             "console": "integratedTerminal",
             "args": ["-vv"],
             "justMyCode": true,
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}/src"
         },
         {
             "name": "Debug server with test policy",
             "type": "debugpy",
             "request": "launch",
-            "module": "agents",
+            "module": "vlagents",
             "console": "integratedTerminal",
             "args": ["start-server", "test", "--port=8080", "--host=localhost", "--kwargs={}"],
             "justMyCode": true,

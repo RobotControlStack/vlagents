@@ -2,8 +2,8 @@ PYSRC = src
 
 # Python
 checkformat:
-	isort --check-only ${PYSRC}
-	black --check ${PYSRC}
+	isort --check-only ${PYSRC}/vlagents
+	black --check ${PYSRC}/vlagents
 
 format:
 	isort ${PYSRC}
@@ -20,7 +20,10 @@ mypy:
 test:
 	pytest ${PYSRC} -vv
 
+bump:
+	cz bump
+
 commit:
 	cz commit
 
-.PHONY: checkformat format lint ruff mypy pytest commit
+.PHONY: checkformat format lint ruff mypy pytest bump commit
