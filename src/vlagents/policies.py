@@ -260,8 +260,9 @@ class VjepaAC(Agent):
             z_n = self.world_model.encode(input_image_tensor)
 
             # [1, 7] -> [B, state_dim]
-            # in DROID 0 is open to 1 is closed 
-            # In RCS 1 is open and 0 is close 
+            # in DROID 0 is open to 1 is closed: float
+            # In RCS 1 is open and 0 is close: binary
+            print(obs.gripper)
             s_n = (
                 torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0)))  # [1-obs.gripper]
                 .unsqueeze(0)
@@ -272,7 +273,8 @@ class VjepaAC(Agent):
             actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
-            first_action[-1] = 1 - first_action[-1]
+            first_action[-1] = 1 - first_action[-1] 
+            print(f"Vjepa Action: {first_action.numpy()[-1]}")
 
         return Act(action=np.array(first_action))
 
@@ -285,6 +287,13 @@ class VjepaAC(Agent):
 
         # time dim exp
         goal_image = np.expand_dims(np.array(img), axis=0)
+
+        # alpha channel check
+        if goal_image.shape[3] == 4:
+            logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
+            # take only rgb channels
+            goal_image = goal_image[:, :, :, :3]
+
         # batch dim exp
         goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
             device=self.device, dtype=torch.float, non_blocking=True
