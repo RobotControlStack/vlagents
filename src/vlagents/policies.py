@@ -262,9 +262,9 @@ class VjepaAC(Agent):
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
             # In RCS 1 is open and 0 is close: binary
-            print(obs.gripper)
+            print("received gripper state", obs.gripper)
             s_n = (
-                torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0)))  # [1-obs.gripper]
+                torch.tensor((np.concatenate(([obs.info["xyzrpy"], [obs.gripper]]), axis=0)))  # [1-obs.gripper]
                 .unsqueeze(0)
                 .to(self.device, dtype=torch.float, non_blocking=True)
             )
@@ -273,8 +273,9 @@ class VjepaAC(Agent):
             actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
-            first_action[-1] = 1 - first_action[-1] 
-            print(f"Vjepa Action: {first_action.numpy()[-1]}")
+            # first_action[-1] = 1 - first_action[-1] 
+
+            print(f"vjepa gripper action: {first_action.numpy()[-1]}")
 
         return Act(action=np.array(first_action))
 
