@@ -157,6 +157,7 @@ class VjepaAC(Agent):
             self.cfg = yaml.safe_load(f)
 
         self.model_name = model_name
+        self.default_checkpoint_path = default_checkpoint_path
 
     def initialize(self):
         # torch import
@@ -165,13 +166,35 @@ class VjepaAC(Agent):
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
+        from app.vjepa_rig.utils import init_video_model, load_checkpoint, load_pretrained
 
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", "exp_1.png")
 
+        # model config 
+        cfgs_model = self.cfg.get("model")
+        use_activation_checkpointing = cfgs_model.get("use_activation_checkpointing", False)
+        model_name = cfgs_model.get("model_name")
+        pred_depth = cfgs_model.get("pred_depth")
+        pred_num_heads = cfgs_model.get("pred_num_heads", None)
+        pred_embed_dim = cfgs_model.get("pred_embed_dim")
+        pred_is_frame_causal = cfgs_model.get("pred_is_frame_causal", True)
+        uniform_power = cfgs_model.get("uniform_power", False)
+        use_rope = cfgs_model.get("use_rope", False)
+        use_silu = cfgs_model.get("use_silu", False)
+        use_pred_silu = cfgs_model.get("use_pred_silu", False)
+        wide_silu = cfgs_model.get("wide_silu", True)
+        use_extrinsics = cfgs_model.get("use_extrinsics", False)
+
+        # --meta 
+        cfgs_meta =  self.cfg.get("meta")
+        use_sdpa = cfgs_meta.get("use_sdpa", False)
+
         # data config
         cfgs_data = self.cfg.get("data")
         crop_size = cfgs_data.get("crop_size", 256)
+        patch_size = cfgs_data.get("patch_size")
+        tubelet_size = cfgs_data.get("tubelet_size")
 
         # data augs
         cfgs_data_aug = self.cfg.get("data_aug")
@@ -206,14 +229,39 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
-        # load model
-        encoder, predictor = torch.hub.load(
-            "./", self.model_name, source="local", pretrained=True  # root of the vjepa source code  # model type
+        # -- init model
+        encoder, predictor = init_video_model(
+            uniform_power=uniform_power,
+            device=self.device,
+            patch_size=patch_size,
+            max_num_frames=512,
+            tubelet_size=tubelet_size,
+            model_name=model_name,
+            crop_size=crop_size,
+            pred_depth=pred_depth,
+            pred_num_heads=pred_num_heads,
+            pred_embed_dim=pred_embed_dim,
+            action_embed_dim=7,
+            pred_is_frame_causal=pred_is_frame_causal,
+            use_extrinsics=use_extrinsics,
+            use_sdpa=use_sdpa,
+            use_silu=use_silu,
+            use_pred_silu=use_pred_silu,
+            wide_silu=wide_silu,
+            use_rope=use_rope,
+            use_activation_checkpointing=use_activation_checkpointing,
+        )
+
+        encoder, predictor, _, _, _, _ = load_checkpoint(
+            r_path=self.default_checkpoint_path,
+            encoder=encoder,
+            predictor=predictor,
+            target_encoder=None,    
         )
 
         # load model to cuda
-        encoder.to(self.device)
-        predictor.to(self.device)
+        encoder.to(self.device).eval()
+        predictor.to(self.device).eval()
 
         # World model wrapper initialization
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
@@ -250,6 +298,7 @@ class VjepaAC(Agent):
             side = decode_jpeg(side)
 
             # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
+            print(side.shape)
             side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
 
             # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
@@ -262,7 +311,7 @@ class VjepaAC(Agent):
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
             # In RCS 1 is open and 0 is close: binary
-            print("received gripper state", obs.gripper)
+            print("received gripper state", obs.info["xyzrpy"], obs.gripper)
             s_n = (
                 torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0))) 
                 .unsqueeze(0)
@@ -273,7 +322,7 @@ class VjepaAC(Agent):
             actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
-            print(f"vjepa gripper action: {first_action.numpy()[-1]}")
+            print(f"vjepa gripper action: {first_action.numpy()}")
             first_action[-1] =  1 - first_action[-1]  # convert back to RCS gripper format
 
         return Act(action=np.array(first_action))
