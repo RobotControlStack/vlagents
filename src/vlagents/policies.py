@@ -329,12 +329,19 @@ class VjepaAC(Agent):
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
-        
-        return {}
-    
-    def goal_image(self, goal_image: np.ndarray):
         # imports
         import torch
+
+        img = Image.open(self.goal_img)
+
+        # time dim exp
+        goal_image = np.expand_dims(np.array(img), axis=0)
+
+        # alpha channel check
+        if goal_image.shape[3] == 4:
+            logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
+            # take only rgb channels
+            goal_image = goal_image[:, :, :, :3]
 
         # batch dim exp
         goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
@@ -343,6 +350,8 @@ class VjepaAC(Agent):
 
         with torch.no_grad():
             self.goal_rep = self.world_model.encode(goal_image_tensor)
+
+        return {}
 
 
 class OpenPiModel(Agent):
