@@ -146,7 +146,7 @@ class VjepaAC(Agent):
         self,
         cfg_path: str,
         model_name: str = "vjepa2_ac_vit_giant",
-        default_checkpoint_path: str = "",
+        default_checkpoint_path: str = "checkpoints/wrist_latest.pt",
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
@@ -170,11 +170,12 @@ class VjepaAC(Agent):
 
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", "exp_1.png")
+        self.goal_img_wrist = self.cfg.get("goal_img_wrist", None)
 
         # model config 
         cfgs_model = self.cfg.get("model")
-        use_activation_checkpointing = cfgs_model.get("use_activation_checkpointing", False)
         model_name = cfgs_model.get("model_name")
+        num_frames = cfgs_model.get("num_frames")
         pred_depth = cfgs_model.get("pred_depth")
         pred_num_heads = cfgs_model.get("pred_num_heads", None)
         pred_embed_dim = cfgs_model.get("pred_embed_dim")
@@ -182,19 +183,15 @@ class VjepaAC(Agent):
         uniform_power = cfgs_model.get("uniform_power", False)
         use_rope = cfgs_model.get("use_rope", False)
         use_silu = cfgs_model.get("use_silu", False)
-        use_pred_silu = cfgs_model.get("use_pred_silu", False)
         wide_silu = cfgs_model.get("wide_silu", True)
         use_extrinsics = cfgs_model.get("use_extrinsics", False)
-
-        # --meta 
-        cfgs_meta =  self.cfg.get("meta")
-        use_sdpa = cfgs_meta.get("use_sdpa", False)
+        use_sdpa = cfgs_model.get("use_sdpa", False)
 
         # data config
         cfgs_data = self.cfg.get("data")
         crop_size = cfgs_data.get("crop_size", 256)
-        patch_size = cfgs_data.get("patch_size")
-        tubelet_size = cfgs_data.get("tubelet_size")
+        patch_size = cfgs_data.get("patch_size", 16)
+        tubelet_size = cfgs_data.get("tubelet_size", 2)
 
         # data augs
         cfgs_data_aug = self.cfg.get("data_aug")
@@ -229,39 +226,53 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
-        # -- init model
-        encoder, predictor = init_video_model(
-            uniform_power=uniform_power,
-            device=self.device,
-            patch_size=patch_size,
-            max_num_frames=512,
-            tubelet_size=tubelet_size,
-            model_name=model_name,
-            crop_size=crop_size,
-            pred_depth=pred_depth,
-            pred_num_heads=pred_num_heads,
-            pred_embed_dim=pred_embed_dim,
-            action_embed_dim=7,
-            pred_is_frame_causal=pred_is_frame_causal,
-            use_extrinsics=use_extrinsics,
-            use_sdpa=use_sdpa,
-            use_silu=use_silu,
-            use_pred_silu=use_pred_silu,
-            wide_silu=wide_silu,
-            use_rope=use_rope,
-            use_activation_checkpointing=use_activation_checkpointing,
-        )
-
-        encoder, predictor, _, _, _, _ = load_checkpoint(
-            r_path=self.default_checkpoint_path,
-            encoder=encoder,
-            predictor=predictor,
-            target_encoder=None,    
+        # load released model
+        encoder, predictor = torch.hub.load(
+            "./", 
+            self.model_name, 
+            source="local", 
+            pretrained=True  
         )
 
         # load model to cuda
         encoder.to(self.device).eval()
         predictor.to(self.device).eval()
+
+        wrist_encoder = None
+        wrist_predictor = None
+
+        if self.goal_img_wrist:
+            # -- init model
+            wrist_encoder, wrist_predictor = init_video_model(
+                model_name=model_name,
+                device=self.device,
+
+                patch_size=patch_size,
+                max_num_frames=num_frames,
+                tubelet_size=tubelet_size,
+                crop_size=crop_size,
+                pred_depth=pred_depth,
+                pred_num_heads=pred_num_heads,
+                pred_embed_dim=pred_embed_dim,
+                action_embed_dim=7,
+                pred_is_frame_causal=pred_is_frame_causal,
+                use_extrinsics=use_extrinsics,
+                uniform_power=uniform_power,
+                use_sdpa=use_sdpa,
+                use_silu=use_silu,
+                wide_silu=wide_silu,
+                use_rope=use_rope,
+            )
+
+            wrist_encoder, wrist_predictor, _, _, _, _ = load_checkpoint(
+                r_path=self.default_checkpoint_path,
+                encoder=wrist_encoder,
+                predictor=wrist_predictor,
+                target_encoder=None,    
+            )
+
+            wrist_encoder.to(self.device).eval()
+            wrist_predictor.to(self.device).eval()
 
         # World model wrapper initialization
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
@@ -283,6 +294,8 @@ class VjepaAC(Agent):
             },
             normalize_reps=True,
             device=self.device,
+            wrist_encoder = wrist_encoder,
+            wrist_predictor = wrist_predictor,
         )
 
     def act(self, obs: Obs) -> Act:
@@ -298,7 +311,6 @@ class VjepaAC(Agent):
             side = decode_jpeg(side)
 
             # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
-            print(side.shape)
             side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
 
             # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
@@ -308,10 +320,26 @@ class VjepaAC(Agent):
             # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
             z_n = self.world_model.encode(input_image_tensor)
 
+
+            if self.goal_img_wrist:
+                wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+                wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+                wrist = decode_jpeg(wrist)
+
+                # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
+                wrist = torch.permute(wrist, (1, 2, 0)).unsqueeze(0)
+
+                # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
+                input_wrist_tensor = (self.transform(wrist)[None, :]).to(
+                    device=self.device, dtype=torch.float, non_blocking=True
+                )
+                # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
+                z_n_wrist = self.world_model.encode(input_wrist_tensor, wrist=True)
+
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
             # In RCS 1 is open and 0 is close: binary
-            print("received gripper state", obs.info["xyzrpy"], obs.gripper)
+            print("received state", obs.info["xyzrpy"], obs.gripper)
             s_n = (
                 torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0))) 
                 .unsqueeze(0)
@@ -320,11 +348,18 @@ class VjepaAC(Agent):
 
             # Action conditioned predictor and zero-shot action inference with CEM
             actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
+            if self.goal_img_wrist:
+                actions_wrist = self.world_model.infer_next_action(z_n_wrist, s_n, self.goal_rep_wrist)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
-            print(f"vjepa gripper action: {first_action.numpy()}")
+            print(f"vjepa action: {first_action.numpy()}")
             first_action[-1] =  1 - first_action[-1]  # convert back to RCS gripper format
 
+            if self.goal_img_wrist:
+                first_wrist_action = actions_wrist[0].cpu()
+                print(f"vjepa wrist action: {first_wrist_action.numpy()}")
+                first_wrist_action[-1] =  1 - first_wrist_action[-1]  # convert back to RCS gripper format
+            
         return Act(action=np.array(first_action))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
@@ -333,9 +368,15 @@ class VjepaAC(Agent):
         import torch
 
         img = Image.open(self.goal_img)
+        
+        if self.goal_img_wrist:
+            img_wrist = Image.open(self.goal_img_wrist)
 
         # time dim exp
         goal_image = np.expand_dims(np.array(img), axis=0)
+        
+        if self.goal_img_wrist:
+            goal_image_wrist = np.expand_dims(np.array(img_wrist), axis=0)
 
         # alpha channel check
         if goal_image.shape[3] == 4:
@@ -343,13 +384,27 @@ class VjepaAC(Agent):
             # take only rgb channels
             goal_image = goal_image[:, :, :, :3]
 
+        if self.goal_img_wrist:
+            if goal_image_wrist.shape[3] == 4:
+                logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
+                # take only rgb channels
+                goal_image_wrist = goal_image_wrist[:, :, :, :3]
+
         # batch dim exp
         goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
             device=self.device, dtype=torch.float, non_blocking=True
         )
 
+        if self.goal_img_wrist:
+            # batch dim exp
+            goal_image_wrist_tensor = torch.tensor(self.transform(goal_image_wrist)[None, :]).to(
+                device=self.device, dtype=torch.float, non_blocking=True
+            )
+
         with torch.no_grad():
             self.goal_rep = self.world_model.encode(goal_image_tensor)
+            if self.goal_img_wrist:
+                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
 
         return {}
 
