@@ -358,15 +358,19 @@ class VjepaAC(Agent):
                                                                    wrist=True)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
-            print(f"vjepa action: {first_action.numpy()}")
-            first_action[-1] =  1 - first_action[-1]  # convert back to RCS gripper format
+            print(f"vjepa side action: {first_action.numpy()}")
+            # convert back to RCS gripper format
+            first_action[-1] =  1 - first_action[-1] 
 
             if self.goal_img_wrist:
                 first_wrist_action = actions_wrist[0].cpu()
                 print(f"vjepa wrist action: {first_wrist_action.numpy()}")
-                first_wrist_action[-1] =  1 - first_wrist_action[-1]  # convert back to RCS gripper format
-            
-        return Act(action=np.array(first_action))
+                first_wrist_action[-1] =  1 - first_wrist_action[-1]  
+                action = np.concatenate((first_action[:3], first_wrist_action[3:]))
+            else:
+                action = first_action
+
+        return Act(action=np.array(action))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
@@ -408,7 +412,7 @@ class VjepaAC(Agent):
             )
 
         with torch.no_grad():
-            
+
             self.goal_rep = self.world_model.encode(goal_image_tensor)
             if self.goal_img_wrist:
                 self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor, 
