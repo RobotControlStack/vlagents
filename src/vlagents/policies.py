@@ -334,7 +334,8 @@ class VjepaAC(Agent):
                     device=self.device, dtype=torch.float, non_blocking=True
                 )
                 # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
-                z_n_wrist = self.world_model.encode(input_wrist_tensor, wrist=True)
+                z_n_wrist = self.world_model.encode(input_wrist_tensor, 
+                                                    wrist=True)
 
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
@@ -347,9 +348,14 @@ class VjepaAC(Agent):
             )
 
             # Action conditioned predictor and zero-shot action inference with CEM
-            actions = self.world_model.infer_next_action(z_n, s_n, self.goal_rep)  # [rollout_horizon, 7]
+            actions = self.world_model.infer_next_action(z_n, 
+                                                         s_n, 
+                                                         self.goal_rep)  # [rollout_horizon, 7]
             if self.goal_img_wrist:
-                actions_wrist = self.world_model.infer_next_action(z_n_wrist, s_n, self.goal_rep_wrist)  # [rollout_horizon, 7]
+                actions_wrist = self.world_model.infer_next_action(z_n_wrist, 
+                                                                   s_n, 
+                                                                   self.goal_rep_wrist,
+                                                                   wrist=True)  # [rollout_horizon, 7]
 
             first_action = actions[0].cpu()
             print(f"vjepa action: {first_action.numpy()}")
@@ -402,9 +408,11 @@ class VjepaAC(Agent):
             )
 
         with torch.no_grad():
+            
             self.goal_rep = self.world_model.encode(goal_image_tensor)
             if self.goal_img_wrist:
-                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
+                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor, 
+                                                              wrist=True)
 
         return {}
 
