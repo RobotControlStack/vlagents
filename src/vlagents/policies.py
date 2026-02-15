@@ -145,8 +145,8 @@ class VjepaAC(Agent):
     def __init__(
         self,
         cfg_path: str,
-        model_name: str = "vjepa2_ac_vit_giant",
-        default_checkpoint_path: str = "checkpoints/wrist_latest.pt",
+        model_name: str = "",
+        default_checkpoint_path: str = "",
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
@@ -156,9 +156,6 @@ class VjepaAC(Agent):
         with open(self.cfg_path, "r") as f:
             self.cfg = yaml.safe_load(f)
 
-        self.model_name = model_name
-        self.default_checkpoint_path = default_checkpoint_path
-
     def initialize(self):
         # torch import
         import torch
@@ -166,7 +163,9 @@ class VjepaAC(Agent):
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
-        from app.vjepa_rig.utils import init_video_model, load_checkpoint, load_pretrained
+        from src.models.vision_transformer import vit_giant_xformers
+        from src.models.ac_predictor import vit_ac_predictor
+        from app.vjepa_rig.utils import load_pretrained
 
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", "exp_1.png")
@@ -174,18 +173,8 @@ class VjepaAC(Agent):
 
         # model config 
         cfgs_model = self.cfg.get("model")
-        model_name = cfgs_model.get("model_name")
-        num_frames = cfgs_model.get("num_frames")
-        pred_depth = cfgs_model.get("pred_depth")
-        pred_num_heads = cfgs_model.get("pred_num_heads", None)
-        pred_embed_dim = cfgs_model.get("pred_embed_dim")
-        pred_is_frame_causal = cfgs_model.get("pred_is_frame_causal", True)
-        uniform_power = cfgs_model.get("uniform_power", False)
-        use_rope = cfgs_model.get("use_rope", False)
-        use_silu = cfgs_model.get("use_silu", False)
-        wide_silu = cfgs_model.get("wide_silu", True)
-        use_extrinsics = cfgs_model.get("use_extrinsics", False)
-        use_sdpa = cfgs_model.get("use_sdpa", False)
+        side_model_name = cfgs_model.get("side_model_name")
+        wrist_model_name = cfgs_model.get("wrist_model_name")
 
         # data config
         cfgs_data = self.cfg.get("data")
@@ -228,8 +217,8 @@ class VjepaAC(Agent):
 
         # load released model
         encoder, predictor = torch.hub.load(
-            "./", 
-            self.model_name, 
+            ".", # path to hubconf.py
+            side_model_name, 
             source="local", 
             pretrained=True  
         )
@@ -243,33 +232,11 @@ class VjepaAC(Agent):
 
         if self.goal_img_wrist:
             # -- init model
-            wrist_encoder, wrist_predictor = init_video_model(
-                model_name=model_name,
-                device=self.device,
-
-                patch_size=patch_size,
-                max_num_frames=num_frames,
-                tubelet_size=tubelet_size,
-                crop_size=crop_size,
-                pred_depth=pred_depth,
-                pred_num_heads=pred_num_heads,
-                pred_embed_dim=pred_embed_dim,
-                action_embed_dim=7,
-                pred_is_frame_causal=pred_is_frame_causal,
-                use_extrinsics=use_extrinsics,
-                uniform_power=uniform_power,
-                use_sdpa=use_sdpa,
-                use_silu=use_silu,
-                wide_silu=wide_silu,
-                use_rope=use_rope,
-            )
-
-            wrist_encoder, wrist_predictor, _, _, _, _ = load_checkpoint(
-                r_path=self.default_checkpoint_path,
-                encoder=wrist_encoder,
-                predictor=wrist_predictor,
-                target_encoder=None,    
-            )
+            wrist_encoder, wrist_predictor = torch.hub.load(
+                                                ".", # path to hubconf.py
+                                                wrist_model_name, 
+                                                source="local",
+                                                pretrained=True) 
 
             wrist_encoder.to(self.device).eval()
             wrist_predictor.to(self.device).eval()
