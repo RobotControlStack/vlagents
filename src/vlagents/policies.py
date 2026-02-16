@@ -319,6 +319,7 @@ class VjepaAC(Agent):
 
                 first_action = actions[0].cpu()
                 print(f"vjepa side action: {first_action.numpy()}")
+                
                 # convert back to RCS gripper format
                 first_action[-1] =  1 - first_action[-1] 
 
@@ -347,12 +348,8 @@ class VjepaAC(Agent):
                 first_wrist_action = actions_wrist[0].cpu()
                 print(f"vjepa wrist action: {first_wrist_action.numpy()}")
 
-                # take negative of values from 3:6
-                first_wrist_action[3:6] = -first_wrist_action[3:6]
                 first_wrist_action[-1] =  1 - first_wrist_action[-1]  
 
-            
-            
             if self.decouple_action:
                 action = np.concatenate((first_action[:3], first_wrist_action[3:]))
             else:
