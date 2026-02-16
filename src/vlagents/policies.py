@@ -168,8 +168,9 @@ class VjepaAC(Agent):
         from app.vjepa_rig.utils import load_pretrained
 
         self.device = self.cfg.get("device", "cuda")
-        self.goal_img = self.cfg.get("goal_img", "exp_1.png")
+        self.goal_img = self.cfg.get("goal_img", None)
         self.goal_img_wrist = self.cfg.get("goal_img_wrist", None)
+        self.decouple_action = self.cfg.get("decouple_action", False)
 
         # model config 
         cfgs_model = self.cfg.get("model")
@@ -215,21 +216,27 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
-        # load released model
-        encoder, predictor = torch.hub.load(
-            ".", # path to hubconf.py
-            side_model_name, 
-            source="local", 
-            pretrained=True  
-        )
 
-        # load model to cuda
-        encoder.to(self.device).eval()
-        predictor.to(self.device).eval()
+        encoder = None
+        predictor = None
+        if self.goal_img:
+            # load released model
+            encoder, predictor = torch.hub.load(
+                ".", # path to hubconf.py
+                side_model_name, 
+                source="local", 
+                pretrained=True  
+            )
+
+            # load model to cuda
+            encoder.to(self.device).eval()
+            predictor.to(self.device).eval()
+
+            tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
+
 
         wrist_encoder = None
         wrist_predictor = None
-
         if self.goal_img_wrist:
             # -- init model
             wrist_encoder, wrist_predictor = torch.hub.load(
@@ -241,8 +248,9 @@ class VjepaAC(Agent):
             wrist_encoder.to(self.device).eval()
             wrist_predictor.to(self.device).eval()
 
+            tokens_per_frame = int((crop_size // wrist_encoder.patch_size) ** 2)
+
         # World model wrapper initialization
-        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
         self.world_model = WorldModel(
             encoder=encoder,
             predictor=predictor,
@@ -272,22 +280,49 @@ class VjepaAC(Agent):
 
         with torch.no_grad():
 
-            # read from camera-stream
-            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-            side = decode_jpeg(side)
+            # [1, 7] -> [B, state_dim]
+            # in DROID 0 is open to 1 is closed: float
+            # In RCS 1 is open and 0 is close: binary
+            print("received state", obs.info["xyzrpy"], obs.gripper)
+            s_n = (
+                torch.tensor((np.concatenate(([obs.info["xyzrpy"], 
+                                            [1-obs.gripper]]), 
+                                            axis=0))) 
+                                            .unsqueeze(0)
+                                            .to(self.device, 
+                                            dtype=torch.float, 
+                                            non_blocking=True)
+                )
 
-            # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
-            side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
+            first_action = None
+            if self.goal_img:
+                # read from camera-stream
+                side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+                side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+                side = decode_jpeg(side)
 
-            # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
-            input_image_tensor = (self.transform(side)[None, :]).to(
-                device=self.device, dtype=torch.float, non_blocking=True
-            )
-            # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
-            z_n = self.world_model.encode(input_image_tensor)
+                # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
+                side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
+
+                # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
+                input_image_tensor = (self.transform(side)[None, :]).to(
+                    device=self.device, dtype=torch.float, non_blocking=True
+                )
+                # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
+                z_n = self.world_model.encode(input_image_tensor)
 
 
+                # Action conditioned predictor and zero-shot action inference with CEM
+                actions = self.world_model.infer_next_action(z_n, 
+                                                             s_n, 
+                                                             self.goal_rep)  # [rollout_horizon, 7]
+
+                first_action = actions[0].cpu()
+                print(f"vjepa side action: {first_action.numpy()}")
+                # convert back to RCS gripper format
+                first_action[-1] =  1 - first_action[-1] 
+
+            first_wrist_action = None
             if self.goal_img_wrist:
                 wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
                 wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
@@ -304,38 +339,25 @@ class VjepaAC(Agent):
                 z_n_wrist = self.world_model.encode(input_wrist_tensor, 
                                                     wrist=True)
 
-            # [1, 7] -> [B, state_dim]
-            # in DROID 0 is open to 1 is closed: float
-            # In RCS 1 is open and 0 is close: binary
-            print("received state", obs.info["xyzrpy"], obs.gripper)
-            s_n = (
-                torch.tensor((np.concatenate(([obs.info["xyzrpy"], [1-obs.gripper]]), axis=0))) 
-                .unsqueeze(0)
-                .to(self.device, dtype=torch.float, non_blocking=True)
-            )
-
-            # Action conditioned predictor and zero-shot action inference with CEM
-            actions = self.world_model.infer_next_action(z_n, 
-                                                         s_n, 
-                                                         self.goal_rep)  # [rollout_horizon, 7]
-            if self.goal_img_wrist:
                 actions_wrist = self.world_model.infer_next_action(z_n_wrist, 
                                                                    s_n, 
                                                                    self.goal_rep_wrist,
                                                                    wrist=True)  # [rollout_horizon, 7]
 
-            first_action = actions[0].cpu()
-            print(f"vjepa side action: {first_action.numpy()}")
-            # convert back to RCS gripper format
-            first_action[-1] =  1 - first_action[-1] 
-
-            if self.goal_img_wrist:
                 first_wrist_action = actions_wrist[0].cpu()
                 print(f"vjepa wrist action: {first_wrist_action.numpy()}")
+
+                # take negative of values from 3:6
+                first_wrist_action[3:6] = -first_wrist_action[3:6]
                 first_wrist_action[-1] =  1 - first_wrist_action[-1]  
+
+            
+            
+            if self.decouple_action:
                 action = np.concatenate((first_action[:3], first_wrist_action[3:]))
             else:
-                action = first_action
+                # pick whichever action tensor exists
+                action = first_action if first_action is not None else first_wrist_action
 
         return Act(action=np.array(action))
 
@@ -344,44 +366,41 @@ class VjepaAC(Agent):
         # imports
         import torch
 
-        img = Image.open(self.goal_img)
-        
-        if self.goal_img_wrist:
-            img_wrist = Image.open(self.goal_img_wrist)
+        if self.goal_img:
+            img = Image.open(self.goal_img)
+            
+            # time dim exp
+            goal_image = np.expand_dims(np.array(img), axis=0)      
 
-        # time dim exp
-        goal_image = np.expand_dims(np.array(img), axis=0)
-        
-        if self.goal_img_wrist:
-            goal_image_wrist = np.expand_dims(np.array(img_wrist), axis=0)
-
-        # alpha channel check
-        if goal_image.shape[3] == 4:
-            logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
-            # take only rgb channels
-            goal_image = goal_image[:, :, :, :3]
-
-        if self.goal_img_wrist:
-            if goal_image_wrist.shape[3] == 4:
+            # alpha channel check
+            if goal_image.shape[3] == 4:
                 logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
                 # take only rgb channels
-                goal_image_wrist = goal_image_wrist[:, :, :, :3]
+                goal_image = goal_image[:, :, :, :3]
 
-        # batch dim exp
-        goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
-            device=self.device, dtype=torch.float, non_blocking=True
-        )
+            # batch dim exp
+            goal_image_tensor = torch.tensor(self.transform(goal_image)[None, :]).to(
+                device=self.device, dtype=torch.float, non_blocking=True
+            )
+
+            with torch.no_grad():
+                self.goal_rep = self.world_model.encode(goal_image_tensor)
 
         if self.goal_img_wrist:
+            img_wrist = Image.open(self.goal_img_wrist)
+            
+            goal_image_wrist = np.expand_dims(np.array(img_wrist), axis=0)
+
+            if goal_image_wrist.shape[3] == 4:
+                logging.warning("goal image has 4 channels, converting to 3 channels by dropping alpha channel")
+                goal_image_wrist = goal_image_wrist[:, :, :, :3]
+
             # batch dim exp
             goal_image_wrist_tensor = torch.tensor(self.transform(goal_image_wrist)[None, :]).to(
                 device=self.device, dtype=torch.float, non_blocking=True
             )
 
-        with torch.no_grad():
-
-            self.goal_rep = self.world_model.encode(goal_image_tensor)
-            if self.goal_img_wrist:
+            with torch.no_grad():
                 self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor, 
                                                               wrist=True)
 
