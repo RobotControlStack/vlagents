@@ -163,9 +163,6 @@ class VjepaAC(Agent):
         # VJEPA imports
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
-        from src.models.vision_transformer import vit_giant_xformers
-        from src.models.ac_predictor import vit_ac_predictor
-        from app.vjepa_rig.utils import load_pretrained
 
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", None)
@@ -174,8 +171,10 @@ class VjepaAC(Agent):
 
         # model config 
         cfgs_model = self.cfg.get("model")
-        side_model_name = cfgs_model.get("side_model_name")
-        wrist_model_name = cfgs_model.get("wrist_model_name")
+        side_model_name = cfgs_model.get("side_model_name", "vjepa2_ac_vit_giant")
+        wrist_model_name = cfgs_model.get("wrist_model_name", None)
+        self.side_decoder_name = cfgs_model.get("side_decoder", None)
+        self.wrist_decoder_name = cfgs_model.get("wrist_decoder", None)
 
         # data config
         cfgs_data = self.cfg.get("data")
@@ -216,39 +215,57 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
+        # --side encoder and predictor
+        # load released model
+        encoder, predictor = torch.hub.load(
+            ".", # path to hubconf.py
+            side_model_name, 
+            source="local", 
+            pretrained=True,
+            load_encoder=True,
+            load_predictor=True if self.goal_img else False
+        )
 
-        encoder = None
-        predictor = None
+        # load model to cuda
+        encoder.to(self.device).eval()
+        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
+
         if self.goal_img:
-            # load released model
-            encoder, predictor = torch.hub.load(
-                ".", # path to hubconf.py
-                side_model_name, 
-                source="local", 
-                pretrained=True  
-            )
-
-            # load model to cuda
-            encoder.to(self.device).eval()
             predictor.to(self.device).eval()
 
-            tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
-
-
-        wrist_encoder = None
+        # --wrist predictor
         wrist_predictor = None
         if self.goal_img_wrist:
             # -- init model
-            wrist_encoder, wrist_predictor = torch.hub.load(
-                                                ".", # path to hubconf.py
-                                                wrist_model_name, 
-                                                source="local",
-                                                pretrained=True) 
-
-            wrist_encoder.to(self.device).eval()
+            _, wrist_predictor = torch.hub.load(
+                ".", # path to hubconf.py
+                wrist_model_name, 
+                source="local",
+                pretrained=True,
+                load_encoder=True,
+                load_predictor=True) 
             wrist_predictor.to(self.device).eval()
 
-            tokens_per_frame = int((crop_size // wrist_encoder.patch_size) ** 2)
+        # --side decoder
+        side_decoder = None
+        if self.side_decoder_name:
+            side_decoder = torch.hub.load(
+                ".", # path to hubconf.py
+                self.side_decoder_name, 
+                source="local", 
+                pretrained=True)
+            side_decoder.to(self.device).eval()
+
+        # --wrist decoder
+        wrist_decoder = None
+        if self.wrist_decoder_name:
+            wrist_decoder = torch.hub.load(
+                ".", # path to hubconf.py
+                self.wrist_decoder_name, 
+                source="local", 
+                pretrained=True)
+            wrist_decoder.to(self.device).eval()
+
 
         # World model wrapper initialization
         self.world_model = WorldModel(
@@ -269,8 +286,9 @@ class VjepaAC(Agent):
             },
             normalize_reps=True,
             device=self.device,
-            wrist_encoder = wrist_encoder,
             wrist_predictor = wrist_predictor,
+            side_decoder = side_decoder,
+            wrist_decoder = wrist_decoder
         )
 
     def act(self, obs: Obs) -> Act:
@@ -337,8 +355,7 @@ class VjepaAC(Agent):
                     device=self.device, dtype=torch.float, non_blocking=True
                 )
                 # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
-                z_n_wrist = self.world_model.encode(input_wrist_tensor, 
-                                                    wrist=True)
+                z_n_wrist = self.world_model.encode(input_wrist_tensor)
 
                 actions_wrist = self.world_model.infer_next_action(z_n_wrist, 
                                                                    s_n, 
@@ -398,8 +415,7 @@ class VjepaAC(Agent):
             )
 
             with torch.no_grad():
-                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor, 
-                                                              wrist=True)
+                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
 
         return {}
 
