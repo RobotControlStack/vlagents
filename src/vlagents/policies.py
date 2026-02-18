@@ -164,6 +164,7 @@ class VjepaAC(Agent):
         from app.vjepa_droid.transforms import make_transforms
         from inference.utils.world_model_wrapper import WorldModel
 
+        self.exp_name = self.cfg.get("exp_name", "random_emp")
         self.device = self.cfg.get("device", "cuda")
         self.goal_img = self.cfg.get("goal_img", None)
         self.goal_img_wrist = self.cfg.get("goal_img_wrist", None)
@@ -203,6 +204,12 @@ class VjepaAC(Agent):
         momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", 0.15)
         maxnorm = cfgs_mpc_args.get("maxnorm", 0.075)
         verbose = cfgs_mpc_args.get("verbose", True)
+
+        # log
+        cfgs_log_args = self.cfg.get("log")
+        log_recons = cfgs_log_args.get("log_recons", False)
+        log_recons_limit = cfgs_log_args.get("log_recons_limit", None)
+
 
         # Initialize transform (random-resize-crop augmentations)
         self.transform = make_transforms(
@@ -288,7 +295,12 @@ class VjepaAC(Agent):
             device=self.device,
             wrist_predictor = wrist_predictor,
             side_decoder = side_decoder,
-            wrist_decoder = wrist_decoder
+            wrist_decoder = wrist_decoder,
+            transform=self.transform,
+            exp_name=self.exp_name,
+            log_recons=log_recons,
+            log_recons_limit=log_recons_limit
+
         )
 
     def act(self, obs: Obs) -> Act:
@@ -317,10 +329,10 @@ class VjepaAC(Agent):
                 # read from camera-stream
                 side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
                 side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-                side = decode_jpeg(side)
+                side_img = decode_jpeg(side)
 
                 # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
-                side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
+                side = torch.permute(side_img, (1, 2, 0)).unsqueeze(0)
 
                 # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
                 input_image_tensor = (self.transform(side)[None, :]).to(
@@ -331,9 +343,11 @@ class VjepaAC(Agent):
 
 
                 # Action conditioned predictor and zero-shot action inference with CEM
-                actions = self.world_model.infer_next_action(z_n, 
+                actions = self.world_model.infer_next_action(side_img,
+                                                             z_n, 
                                                              s_n, 
-                                                             self.goal_rep)  # [rollout_horizon, 7]
+                                                             self.goal_rep
+                                                             )  # [rollout_horizon, 7]
 
                 first_action = actions[0].cpu()
                 print(f"vjepa side action: {first_action.numpy()}")
@@ -345,10 +359,10 @@ class VjepaAC(Agent):
             if self.goal_img_wrist:
                 wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
                 wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
-                wrist = decode_jpeg(wrist)
+                wrist_img = decode_jpeg(wrist)
 
                 # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
-                wrist = torch.permute(wrist, (1, 2, 0)).unsqueeze(0)
+                wrist = torch.permute(wrist_img, (1, 2, 0)).unsqueeze(0)
 
                 # [1, 720, 1280, 3] -> [1, 3, 1, 256, 1408] i.e, [B, C, T, Patches, dim]
                 input_wrist_tensor = (self.transform(wrist)[None, :]).to(
@@ -357,7 +371,8 @@ class VjepaAC(Agent):
                 # Pre-trained VJEPA 2 ENCODER: [1, 3, 1, 256, 1408] -> [1, 256, 1408]
                 z_n_wrist = self.world_model.encode(input_wrist_tensor)
 
-                actions_wrist = self.world_model.infer_next_action(z_n_wrist, 
+                actions_wrist = self.world_model.infer_next_action(wrist_img,
+                                                                   z_n_wrist, 
                                                                    s_n, 
                                                                    self.goal_rep_wrist,
                                                                    wrist=True)  # [rollout_horizon, 7]
