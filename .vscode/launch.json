@@ -4,23 +4,23 @@
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
-        {
-            "name": "Debug python tests",
-            "type": "debugpy",
-            "request": "launch",
-            "module": "pytest",
-            "console": "integratedTerminal",
-            "args": ["-vv"],
-            "justMyCode": true,
-            "cwd": "${workspaceFolder}"
-        },
+        // {
+        //     "name": "Debug python tests",
+        //     "type": "debugpy",
+        //     "request": "launch",
+        //     "module": "pytest",
+        //     "console": "integratedTerminal",
+        //     "args": ["-vv"],
+        //     "justMyCode": true,
+        //     "cwd": "${workspaceFolder}"
+        // },
         {
             "name": "Debug server with test policy",
             "type": "debugpy",
             "request": "launch",
             "module": "agents",
             "console": "integratedTerminal",
-            "args": ["start-server", "test", "--port=8080", "--host=localhost", "--kwargs={}"],
+            "args": ["start-server", "lerobot_pi", "--port=20997", "--host=0.0.0.0", "--kwargs={\"checkpoint_path\": \"/home/gamal/pi0_fintuned/pi0_droid_pytorch_29999\"}"],
             "justMyCode": true,
             "cwd": "${workspaceFolder}"
         },

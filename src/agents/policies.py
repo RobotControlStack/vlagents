@@ -10,12 +10,11 @@ from multiprocessing import resource_tracker, shared_memory
 from operator import getitem
 from pathlib import Path
 from typing import Any, Union
-from torchvision.io import decode_jpeg
-from torchvision.transforms import v2
+
 
 import numpy as np
 from PIL import Image
-import torch
+
 
 
 @dataclass(kw_only=True)
@@ -36,6 +35,7 @@ class Obs:
 @dataclass(kw_only=True)
 class Act:
     action: np.ndarray
+    original_action: np.ndarray | None = None
     done: bool = False
     info: dict[str, Any] = field(default_factory=dict)
 
@@ -169,7 +169,9 @@ class OpenPiModel(Agent):
             
             else:
                 self.s = 0
-
+        from torchvision.io import decode_jpeg
+        from torchvision.transforms import v2
+        import torch
         side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
         side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
         side = decode_jpeg(side)
@@ -251,7 +253,7 @@ class LerobotPiModel(Agent):
         super().__init__(default_checkpoint_path=checkpoint_path, **kwargs)
 
     def initialize(self):
-        from lerobot.lerobot_inference.rtc_controller import RTCDemoConfig, LeRobotPolicy
+        from lerobot.lerobot_inference.lerobot_policy import RTCDemoConfig, LeRobotPolicy
         from lerobot.configs.policies import PreTrainedConfig
         policy_cfg = PreTrainedConfig.from_pretrained(pretrained_name_or_path=self.default_checkpoint_path)
         cfg = RTCDemoConfig(policy=policy_cfg)
@@ -262,8 +264,9 @@ class LerobotPiModel(Agent):
         print("LeRobotPolicy initialized")
 
     def act(self, obs: Obs) -> Act:
+        from torchvision.io import decode_jpeg
+        from torchvision.transforms import v2
         import torch
-
         super().act(obs)
 
         side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
@@ -275,21 +278,25 @@ class LerobotPiModel(Agent):
         wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
         wrist = decode_jpeg(wrist)
         wrist = v2.Resize((256, 256))(wrist)
-        
+        state = torch.tensor(np.concatenate([obs.info["joints"], [1-obs.gripper]]))
+        if obs.info.get("prev_chunk_left_over") is None:
+            prev_left = None
+        else:
+            prev_left = torch.tensor(obs.info["prev_chunk_left_over"])
+        inference_delay = obs.info["inference_delay"]
         observation = {}
         observation.update(
             {
                 "observation.images.image": side,
                 "observation.images.image2": wrist,
-                "observation/state": torch.tensor(np.concatenate([obs.info["joints"], [1-obs.gripper]])), # to torch tensor later
+                "observation.state": state, # to torch tensor later
                 "task": [self.instruction],
             })
-        action = self.policy.infer(observation)
-        # post, orig = self.policy.get_actions(
-        #     obs, prev_chunk_left_over=prev_left, inference_delay=inference_delay
-        # )
-        # action = post.detach().cpu().numpy()
-        return Act(action=np.array(action))
+        #action = self.policy.act(observation)
+        post, orig = self.policy.infer(
+            observation, prev_chunk_left_over=prev_left, inference_delay=inference_delay
+        )
+        return Act(action=post, original_action=orig)
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         info = super().reset(obs, instruction, **kwargs)
@@ -362,8 +369,9 @@ class OpenVLAModel(Agent):
 
     def act(self, obs: Obs) -> Act:
         # no batch dimension here
+        from torchvision.io import decode_jpeg
+        from torchvision.transforms import v2
         import torch
-
         super().act(obs)
         # Parse payload components
         #assert obs.cameras["rgb_side"].shape == (256, 256, 3), "wrong shape, use lanczos"
