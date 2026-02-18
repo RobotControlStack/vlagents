@@ -108,23 +108,46 @@ class TestAgent(Agent):
     def act(self, obs: Obs) -> Act:
         super().act(obs)
         # echo data back for testing
-        info = {
-            "shapes": {k: v.shape for k, v in obs.cameras.items()},
-            "dtype": {k: v.dtype.name for k, v in obs.cameras.items()},
-            "data": {k: v for k, v in obs.cameras.items()},
-        }
-        a = Act(action=np.array([0, 0, 0, 0, 0, 0, self.i % 2], dtype=np.float32), done=False, info=info)
+        if self.on_same_machine:
+            logging.info("TestAgent.act using shared memory for cameras")
+            info = {
+                # "shapes": {k: v.shape for k, v in obs.cameras.items()},
+                # "dtype": {k: v.dtype.name for k, v in obs.cameras.items()},
+                #"data": {k: v for k, v in obs.cameras.items()},
+            }
+        else:
+            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+            side = decode_jpeg(side)
+            side = v2.Resize((256, 256))(side)
+
+            wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+            wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+            wrist = decode_jpeg(wrist)
+            wrist = v2.Resize((256, 256))(wrist)
+            info = {
+            }
         self.i += 1
+        a = Act(action=np.array([0, 0, 0, 0, 0, 0, self.i % 2], dtype=np.float32), done=False, info=info)
         return a
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        self.on_same_machine = kwargs.get("on_same_machine", False)
+        if self.on_same_machine:
+            logging.info("TestAgent.reset called with on_same_machine=True")
         super().reset(obs, instruction, **kwargs)
-        info = {
-            "shapes": {k: v.shape for k, v in obs.cameras.items()},
-            "dtype": {k: v.dtype.name for k, v in obs.cameras.items()},
-            "data": {k: v for k, v in obs.cameras.items()},
-            "instruction": instruction,
-        }
+        if self.on_same_machine:
+            logging.info("TestAgent.reset using shared memory for cameras")
+            info = {
+                # "shapes": {k: v.shape for k, v in obs.cameras.items()},
+                # "dtype": {k: v.dtype.name for k, v in obs.cameras.items()},
+                #"data": {k: v for k, v in obs.cameras.items()},
+                # "instruction": instruction,
+            }
+        else:
+            info = {
+                # "instruction": instruction,
+            }
         return info
 
 
