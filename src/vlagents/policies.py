@@ -313,10 +313,10 @@ class VjepaAC(Agent):
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
             # In RCS 1 is open and 0 is close: binary
-            print("received state", obs.info["xyzrpy"], obs.gripper)
+            print("received state", obs.info["xyzrpy"], 1-obs.gripper[0])
             s_n = (
                 torch.tensor((np.concatenate(([obs.info["xyzrpy"], 
-                                            [1-obs.gripper]]), 
+                                               [1-obs.gripper[0]]]), 
                                             axis=0))) 
                                             .unsqueeze(0)
                                             .to(self.device, 
@@ -379,7 +379,6 @@ class VjepaAC(Agent):
 
                 first_wrist_action = actions_wrist[0].cpu()
                 print(f"vjepa wrist action: {first_wrist_action.numpy()}")
-
                 first_wrist_action[-1] =  1 - first_wrist_action[-1]  
 
             if self.decouple_action:
