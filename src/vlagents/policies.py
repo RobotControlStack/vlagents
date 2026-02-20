@@ -258,7 +258,7 @@ class VjepaAC(Agent):
 
         # --side decoder
         side_decoder = None
-        if log_recons:
+        if log_recons and self.goal_img:
             side_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.side_decoder_name, 
@@ -268,7 +268,7 @@ class VjepaAC(Agent):
 
         # --wrist decoder
         wrist_decoder = None
-        if log_recons:
+        if log_recons and self.goal_img_wrist:
             wrist_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.wrist_decoder_name, 
