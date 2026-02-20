@@ -208,8 +208,11 @@ class VjepaAC(Agent):
         # log
         cfgs_log_args = self.cfg.get("log")
         log_recons = cfgs_log_args.get("log_recons", False)
-        log_recons_limit = cfgs_log_args.get("log_recons_limit", None)
 
+        # exp
+        cfgs_exp_args = self.cfg.get("exp")
+        objective = cfgs_exp_args.get("objective", "l1")
+        warm_starting = cfgs_exp_args.get("warm-starting", False)
 
         # Initialize transform (random-resize-crop augmentations)
         self.transform = make_transforms(
@@ -290,6 +293,8 @@ class VjepaAC(Agent):
                 "momentum_std_gripper": momentum_std_gripper,
                 "maxnorm": maxnorm,
                 "verbose": verbose,
+                "objective": objective,
+                "warm_starting": warm_starting
             },
             normalize_reps=True,
             device=self.device,
@@ -298,10 +303,9 @@ class VjepaAC(Agent):
             wrist_decoder = wrist_decoder,
             transform=self.transform,
             exp_name=self.exp_name,
-            log_recons=log_recons,
-            log_recons_limit=log_recons_limit
-
+            log_recons=log_recons
         )
+        self.prev_action = None
 
     def act(self, obs: Obs) -> Act:
         # torch imports
@@ -324,7 +328,6 @@ class VjepaAC(Agent):
                                             non_blocking=True)
                 )
 
-            first_action = None
             if self.goal_img:
                 # read from camera-stream
                 side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
@@ -346,16 +349,19 @@ class VjepaAC(Agent):
                 actions = self.world_model.infer_next_action(side_img,
                                                              z_n, 
                                                              s_n, 
-                                                             self.goal_rep
+                                                             self.goal_rep,
+                                                             wrist=False,
+                                                             prev_action=self.prev_action,
                                                              )  # [rollout_horizon, 7]
 
                 first_action = actions[0].cpu()
                 print(f"vjepa side action: {first_action.numpy()}")
                 
+                prev_action = actions[1:]
+                
                 # convert back to RCS gripper format
                 first_action[-1] =  1 - first_action[-1] 
 
-            first_wrist_action = None
             if self.goal_img_wrist:
                 wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
                 wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
@@ -375,17 +381,27 @@ class VjepaAC(Agent):
                                                                    z_n_wrist, 
                                                                    s_n, 
                                                                    self.goal_rep_wrist,
-                                                                   wrist=True)  # [rollout_horizon, 7]
+                                                                   wrist=True,
+                                                                   prev_action=self.prev_action
+                                                                   ) # [rollout_horizon, 7]
 
                 first_wrist_action = actions_wrist[0].cpu()
                 print(f"vjepa wrist action: {first_wrist_action.numpy()}")
+
+                prev_wrist_action = actions_wrist[1:]
+
+                # convert back to RCS gripper format
                 first_wrist_action[-1] =  1 - first_wrist_action[-1]  
 
             if self.decouple_action:
                 action = np.concatenate((first_action[:3], first_wrist_action[3:]))
+                self.prev_action = np.concatenate((prev_action[:, :3], 
+                                                   prev_wrist_action[:, 3:]), 
+                                                   axis=-1) 
             else:
                 # pick whichever action tensor exists
-                action = first_action if first_action is not None else first_wrist_action
+                action = first_action if self.goal_img else first_wrist_action
+                self.prev_action = prev_action if self.goal_img else prev_wrist_action
 
         return Act(action=np.array(action))
 
