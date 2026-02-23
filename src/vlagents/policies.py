@@ -304,6 +304,8 @@ class VjepaAC(Agent):
             side_decoder = side_decoder,
             wrist_decoder = wrist_decoder,
             transform=transform,
+            goal_rep=self.goal_rep,
+            goal_rep_wrist=self.goal_rep_wrist,
             exp_name=exp_name,
             log_recons=log_recons,
             log_objective_loss=log_objective_loss,
@@ -349,9 +351,7 @@ class VjepaAC(Agent):
             actions = self.world_model.infer_next_action(
                                             s_n,
                                             side_img,
-                                            self.goal_rep,
                                             wrist_img, 
-                                            self.goal_rep_wrist,
                                             prev_action=self.prev_action,
                                         ) # [rollout_horizon, 7]
 
