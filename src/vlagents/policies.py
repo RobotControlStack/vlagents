@@ -399,9 +399,8 @@ class VjepaAC(Agent):
                                                    prev_wrist_action[:, 3:]), 
                                                    axis=-1) 
             else:
-                # pick whichever action tensor exists
-                action = first_action if self.goal_img else first_wrist_action
-                self.prev_action = prev_action if self.goal_img else prev_wrist_action
+                # TODO: pick whichever model has lesser loss
+                pass
 
         return Act(action=np.array(action))
 
