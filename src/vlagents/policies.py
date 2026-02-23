@@ -206,17 +206,18 @@ class VjepaAC(Agent):
         # log
         cfgs_log_args = self.cfg.get("log")
         log_recons = cfgs_log_args.get("log_recons", False)
+        log_objective_loss = cfgs_log_args.get("log_objective_loss", False)
 
         # exp
         cfgs_exp_args = self.cfg.get("exp")
         objective = cfgs_exp_args.get("objective", "l1")
         warm_starting = cfgs_exp_args.get("warm-starting", False)
-        self.decouple_action = cfgs_exp_args.get("decouple_action", False)
-        self.best_actionpredictor = cfgs_exp_args.get("best_actionpredictor", False)
-        self.exp_name = cfgs_exp_args.get("exp_name", "random_emp")
+        decouple_action = cfgs_exp_args.get("decouple_action", False)
+        best_actionpredictor = cfgs_exp_args.get("best_actionpredictor", False)
+        exp_name = cfgs_exp_args.get("exp_name", "random_emp")
 
         # Initialize transform (random-resize-crop augmentations)
-        self.transform = make_transforms(
+        transform = make_transforms(
             random_horizontal_flip=horizontal_flip,
             random_resize_aspect_ratio=ar_range,
             random_resize_scale=rr_scale,
@@ -302,13 +303,13 @@ class VjepaAC(Agent):
             wrist_predictor = wrist_predictor,
             side_decoder = side_decoder,
             wrist_decoder = wrist_decoder,
-            transform=self.transform,
-            exp_name=self.exp_name,
+            transform=transform,
+            exp_name=exp_name,
             log_recons=log_recons,
-            decoupled=self.decouple_action,
-            best_actionpredictor=self.best_actionpredictor,
+            log_objective_loss=log_objective_loss,
+            decoupled=decouple_action,
+            best_actionpredictor=best_actionpredictor
         )
-        self.prev_action = None
 
     def act(self, obs: Obs) -> Act:
         # torch imports
@@ -367,6 +368,10 @@ class VjepaAC(Agent):
         super().reset(obs, instruction, **kwargs)
         # imports
         import torch
+
+        self.prev_action = None
+        if hasattr(self, "world_model"):
+            self.world_model.reset_logs()
 
         self.goal_rep = None
         if self.goal_img:
