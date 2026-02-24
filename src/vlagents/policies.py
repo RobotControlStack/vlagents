@@ -348,14 +348,14 @@ class VjepaAC(Agent):
   
 
             # Action conditioned predictor and zero-shot action inference with CEM
-            actions = self.world_model.infer_next_action(
+            actions, mean = self.world_model.infer_next_action(
                                             s_n,
                                             side_img,
                                             wrist_img, 
                                             prev_action=self.prev_action,
                                         ) # [rollout_horizon, 7]
 
-            self.prev_action = actions[1:]
+            self.prev_action = mean[1:]
             
             first_action = actions[0].cpu()
             print(f"vjepa side action: {first_action.numpy()}")
