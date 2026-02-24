@@ -212,7 +212,7 @@ class VjepaAC(Agent):
         cfgs_exp_args = self.cfg.get("exp")
         objective = cfgs_exp_args.get("objective", "l1")
         warm_starting = cfgs_exp_args.get("warm-starting", False)
-        decouple_action = cfgs_exp_args.get("decouple_action", False)
+        decoupled_action = cfgs_exp_args.get("decoupled_action", False)
         best_actionpredictor = cfgs_exp_args.get("best_actionpredictor", False)
         exp_name = cfgs_exp_args.get("exp_name", "random_emp")
 
@@ -304,12 +304,12 @@ class VjepaAC(Agent):
             side_decoder = side_decoder,
             wrist_decoder = wrist_decoder,
             transform=transform,
-            goal_rep=self.goal_rep,
-            goal_rep_wrist=self.goal_rep_wrist,
+            goal_rep=None,
+            goal_rep_wrist=None,
             exp_name=exp_name,
             log_recons=log_recons,
             log_objective_loss=log_objective_loss,
-            decoupled=decouple_action,
+            decoupled_action=decoupled_action,
             best_actionpredictor=best_actionpredictor
         )
 
@@ -369,43 +369,42 @@ class VjepaAC(Agent):
         # imports
         import torch
 
-        self.prev_action = None
-        if hasattr(self, "world_model"):
-            self.world_model.reset_logs()
-
-        self.goal_rep = None
+        goal_rep = None
         if self.goal_img:
             img = Image.open(self.goal_img)
 
             # alpha channel check
-            if img.shape[3] == 4:
+            goal_image = np.array(img)
+
+            if goal_image.ndim == 3 and goal_image.shape[2] == 4:
                 logging.warning("goal image has 4 channels, " \
                 "converting to 3 channels by dropping alpha channel")
                 # take only rgb channels
-                goal_image = np.array(img)[:, :, :3]
-            else:
-                goal_image = np.array(img)
+                goal_image = goal_image[:, :, :3]
             
             goal_image_tensor = torch.tensor(goal_image)
 
             with torch.no_grad():
-                self.goal_rep = self.world_model.encode(goal_image_tensor)
+                goal_rep = self.world_model.encode(goal_image_tensor)
 
-        self.goal_rep_wrist = None
+        goal_rep_wrist = None
         if self.goal_img_wrist:
             img_wrist = Image.open(self.goal_img_wrist)
-            
-            if img_wrist.shape[3] == 4:
+
+            goal_image_wrist = np.array(img_wrist)
+            if goal_image_wrist.ndim == 3 and goal_image_wrist.shape[2] == 4:
                 logging.warning("goal image has 4 channels, " \
                 "converting to 3 channels by dropping alpha channel")
-                goal_image_wrist = np.array(img_wrist)[:, :, :3]
-            else:
-                goal_image_wrist = np.array(img_wrist)
+                goal_image_wrist = goal_image_wrist[:, :, :3]
 
             goal_image_wrist_tensor = torch.tensor(goal_image_wrist)
 
             with torch.no_grad():
-                self.goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
+                goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
+
+        self.prev_action = None
+        if hasattr(self, "world_model"):
+            self.world_model.reset_logs(goal_rep=goal_rep, goal_rep_wrist=goal_rep_wrist)
 
         return {}
 
