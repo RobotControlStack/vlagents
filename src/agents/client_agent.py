@@ -65,7 +65,7 @@ class ClientAgent(RemoteAgent):
             obs_struct = self.get_obs(obs)
             action = self.act(obs_struct)
             end_time = time.perf_counter()
-            time.sleep(0.01)  # to avoid overloading the server    
+            time.sleep(0.25)  # to avoid overloading the server
             times.append(end_time - start_time)
         avg_time = sum(times) / runs
         max_time = max(times)
@@ -74,10 +74,20 @@ class ClientAgent(RemoteAgent):
         print(f"Max time for get_obs and act(): {max_time:.4f} seconds")
         print(f"Min time for get_obs and act(): {min_time:.4f} seconds")
         print("standard deviation:", np.std(np.array(times)))
+        results = {
+            
+            "average_time": avg_time,
+            "max_time": max_time,
+            "min_time": min_time,
+            "std_dev": np.std(np.array(times)),
+            "times": times,
+        }
+        return results
+
 
 if __name__ == "__main__":
     port = 20997
-    local = False
+    local = True
     if local == True:
     # test local connection
         host = "localhost"
@@ -99,4 +109,13 @@ if __name__ == "__main__":
     print("on_same_machine:", on_same_machine)
     print("image size:", image_size)
     client_agent = ClientAgent(host=host, port=port, model=model, on_same_machine=on_same_machine)
-    client_agent.benchmark(imgs_path_dict, image_size, runs=1000)
+    results_benchmark = client_agent.benchmark(imgs_path_dict, image_size, runs=1000)
+    # save results to json file
+    import json
+    import os
+    dir_path = "/home/gamal/RobotControlStack/time_benchmarks"
+    os.makedirs(dir_path, exist_ok=True)
+    json_path = f"{dir_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{image_size[0]}x{image_size[1]}.json"
+    with open(json_path, "w") as f:
+        json.dump(results_benchmark, f, indent=4)
+    print(f"Benchmark results saved to {json_path}")
