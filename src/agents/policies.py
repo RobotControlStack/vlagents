@@ -211,12 +211,14 @@ class OpenPiModel(Agent):
         # side = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
         # wrist = np.copy(obs.cameras["rgb_side"]).transpose(2, 0, 1)
         # return Act(action=np.array([]))
+        if isinstance(obs.gripper, np.ndarray) or isinstance(obs.gripper, list):
+            gripper_val = obs.gripper[0]
         observation = {}
         observation.update(
             {
                 "observation/image": side,
                 "observation/wrist_image": wrist,
-                "observation/state": np.concatenate([obs.info["joints"], [1-obs.gripper]]),
+                "observation/state": np.concatenate([obs.info["joints"], [1-gripper_val]]),
                 "prompt": self.instruction,
             })
         # calculate the time it takes to run policy inference
