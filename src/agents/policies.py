@@ -301,7 +301,9 @@ class LerobotPiModel(Agent):
         wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
         wrist = decode_jpeg(wrist)
         wrist = v2.Resize((256, 256))(wrist)
-        state = torch.tensor(np.concatenate([obs.info["joints"], [1-obs.gripper]]))
+        if isinstance(obs.gripper, np.ndarray) or isinstance(obs.gripper, list):
+            gripper_val = obs.gripper[0]
+        state = torch.tensor(np.concatenate([obs.info["joints"], [1-gripper_val]]))
         if obs.info.get("prev_chunk_left_over") is None:
             prev_left = None
         else:
