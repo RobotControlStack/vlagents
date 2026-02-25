@@ -306,11 +306,15 @@ class LerobotPiModel(Agent):
         if isinstance(obs.gripper, np.ndarray) or isinstance(obs.gripper, list):
             gripper_val = obs.gripper[0]
         state = torch.tensor(np.concatenate([obs.info["joints"], [1-gripper_val]]))
-        if obs.info.get("prev_chunk_left_over") is None:
+        if obs.info.get("prev_chunk_left_over", None) is None:
             prev_left = None
         else:
             prev_left = torch.tensor(obs.info["prev_chunk_left_over"])
-        inference_delay = obs.info["inference_delay"]
+        if obs.info.get("inference_delay", None) is not None:
+            inference_delay = obs.info["inference_delay"]
+        else:
+            inference_delay = 0
+        
         observation = {}
         observation.update(
             {
