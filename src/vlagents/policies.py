@@ -201,6 +201,7 @@ class VjepaAC(Agent):
         momentum_std = cfgs_mpc_args.get("momentum_std", 0.75)
         momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", 0.15)
         maxnorm = cfgs_mpc_args.get("maxnorm", 0.075)
+        maxrotnorm = cfgs_mpc_args.get("maxrotnorm", 0.0314) 
         verbose = cfgs_mpc_args.get("verbose", True)
 
         # log
@@ -294,6 +295,7 @@ class VjepaAC(Agent):
                 "momentum_std": momentum_std,
                 "momentum_std_gripper": momentum_std_gripper,
                 "maxnorm": maxnorm,
+                "maxrotnorm": maxrotnorm,
                 "verbose": verbose,
                 "objective": objective,
                 "warm_starting": warm_starting
