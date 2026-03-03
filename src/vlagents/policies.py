@@ -168,8 +168,11 @@ class VjepaAC(Agent):
 
         # model config 
         cfgs_model = self.cfg.get("model")
-        side_model_name = cfgs_model.get("side_model_name", "vjepa2_ac_vit_giant")
-        wrist_model_name = cfgs_model.get("wrist_model_name", None)
+
+        pretrained_encoder = cfgs_model.get("pretrained_encoder", None)
+        predictors = cfgs_model.get("predictors", None)
+        dual_predictor = cfgs_model.get("dual_predictor", False)
+
         self.side_decoder_name = cfgs_model.get("side_decoder", None)
         self.wrist_decoder_name = cfgs_model.get("wrist_decoder", None)
 
@@ -225,38 +228,32 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
-        # load encoder released model
-        encoder, predictor = torch.hub.load(
+        # load pretrained encoder model
+        encoder = torch.hub.load(
             ".", # path to hubconf.py
-            side_model_name, 
+            pretrained_encoder, 
             source="local", 
             pretrained=True,
-            load_encoder=True,
-            load_predictor=True if self.goal_img else False
         )
         encoder.to(self.device).eval()
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
 
-        # --  side predictor
-        if self.goal_img:
-            predictor.to(self.device).eval()
-
-        # -- only wrist predictor
-        wrist_predictor = None
-        if self.goal_img_wrist:
-            # -- init model
-            _, wrist_predictor = torch.hub.load(
+        # -- single predictors
+        predictor_models =[]
+        for predictor in predictors:
+            pred_model = torch.hub.load(
                 ".", # path to hubconf.py
-                wrist_model_name, 
+                encoder.embed,
+                predictor, 
                 source="local",
-                pretrained=True,
-                load_encoder=True,
-                load_predictor=True) 
-            wrist_predictor.to(self.device).eval()
+                pretrained=True
+            ) 
+            pred_model.to(self.device).eval()
+            predictor_models.append({predictor: pred_model}) 
 
-        # --side decoder
+        # -- side decoder
         side_decoder = None
-        if log_recons and self.goal_img:
+        if log_recons and self.goal_rep:
             side_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.side_decoder_name, 
@@ -264,9 +261,9 @@ class VjepaAC(Agent):
                 pretrained=True)
             side_decoder.to(self.device).eval()
 
-        # --wrist decoder
+        # -- wrist decoder
         wrist_decoder = None
-        if log_recons and self.goal_img_wrist:
+        if log_recons and self.goal_rep_wrist:
             wrist_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.wrist_decoder_name, 
@@ -278,7 +275,8 @@ class VjepaAC(Agent):
         # World model wrapper initialization
         self.world_model = WorldModel(
             encoder=encoder,
-            predictor=predictor,
+            predictor=predictor_models,
+            dual_predictor=dual_predictor,
             tokens_per_frame=tokens_per_frame,
             mpc_args={
                 "rollout": self.rollout_horizon,
@@ -297,13 +295,9 @@ class VjepaAC(Agent):
             },
             normalize_reps=True,
             device=self.device,
-            wrist_predictor = wrist_predictor,
             side_decoder = side_decoder,
             wrist_decoder = wrist_decoder,
             transform=transform,
-            goal_rep=None,
-            goal_rep_wrist=None,
-            exp_name=self.exp,
             log_recons=log_recons,
             log_objective_loss=log_objective_loss,
             decoupled_action=decoupled_action,
@@ -331,17 +325,13 @@ class VjepaAC(Agent):
                                             non_blocking=True)
                 )
 
-            side_img = None
-            if self.goal_rep:
-                side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-                side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-                side_img = decode_jpeg(side)
+            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
+            side_img = decode_jpeg(side)
 
-            wrist_img = None
-            if self.goal_rep_wrist:
-                wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
-                wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
-                wrist_img = decode_jpeg(wrist)
+            wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+            wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
+            wrist_img = decode_jpeg(wrist)
   
 
             # Action conditioned predictor and zero-shot action inference with CEM
@@ -367,24 +357,21 @@ class VjepaAC(Agent):
         import torch
         from torchvision.io import decode_jpeg
 
-        self.exp = instruction
-
         self.goal_rep = None
-        if "rgb_side" in obs.cameras:
-            goal_image = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            goal_image = torch.frombuffer(bytearray(goal_image), dtype=torch.uint8)
-            self.goal_rep = self.world_model.encode(decode_jpeg(goal_image))
-        
-        self.goal_rep_wrist = None
-        if "rgb_wrist" in obs.cameras:
-            goal_wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
-            goal_wrist = torch.frombuffer(bytearray(goal_wrist), dtype=torch.uint8)
-            self.goal_rep_wrist = self.world_model.encode(decode_jpeg(goal_wrist))
+
+        goal_image = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+        goal_image = torch.frombuffer(bytearray(goal_image), dtype=torch.uint8)
+        self.goal_rep = self.world_model.encode(decode_jpeg(goal_image))
+    
+        goal_wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+        goal_wrist = torch.frombuffer(bytearray(goal_wrist), dtype=torch.uint8)
+        self.goal_rep_wrist = self.world_model.encode(decode_jpeg(goal_wrist))
 
         self.prev_action = None
         if hasattr(self, "world_model"):
             self.world_model.reset_logs(goal_rep=self.goal_rep, 
-                                        goal_rep_wrist=self.goal_rep_wrist)
+                                        goal_rep_wrist=self.goal_rep_wrist,
+                                        exp_name=instruction)
 
         return {}
 
