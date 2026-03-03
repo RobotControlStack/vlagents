@@ -171,7 +171,6 @@ class VjepaAC(Agent):
 
         pretrained_encoder = cfgs_model.get("pretrained_encoder", None)
         predictors = cfgs_model.get("predictors", None)
-        dual_predictor = cfgs_model.get("dual_predictor", False)
 
         self.side_decoder_name = cfgs_model.get("side_decoder", None)
         self.wrist_decoder_name = cfgs_model.get("wrist_decoder", None)
@@ -239,7 +238,7 @@ class VjepaAC(Agent):
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
 
         # -- single predictors
-        predictor_models =[]
+        predictor_models = {}
         for predictor in predictors:
             pred_model = torch.hub.load(
                 ".", # path to hubconf.py
@@ -249,7 +248,7 @@ class VjepaAC(Agent):
                 pretrained=True
             ) 
             pred_model.to(self.device).eval()
-            predictor_models.append({predictor: pred_model}) 
+            predictor_models[predictor] = pred_model
 
         # -- side decoder
         side_decoder = None
@@ -276,7 +275,6 @@ class VjepaAC(Agent):
         self.world_model = WorldModel(
             encoder=encoder,
             predictor=predictor_models,
-            dual_predictor=dual_predictor,
             tokens_per_frame=tokens_per_frame,
             mpc_args={
                 "rollout": self.rollout_horizon,
