@@ -242,17 +242,17 @@ class VjepaAC(Agent):
         for predictor in predictors:
             pred_model = torch.hub.load(
                 ".", # path to hubconf.py
-                encoder.embed,
                 predictor, 
                 source="local",
-                pretrained=True
+                encoder_embed_dim=encoder.embed_dim,
+                pretrained=True,
             ) 
             pred_model.to(self.device).eval()
             predictor_models[predictor] = pred_model
 
         # -- side decoder
         side_decoder = None
-        if log_recons and self.goal_rep:
+        if log_recons:
             side_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.side_decoder_name, 
@@ -262,7 +262,7 @@ class VjepaAC(Agent):
 
         # -- wrist decoder
         wrist_decoder = None
-        if log_recons and self.goal_rep_wrist:
+        if log_recons:
             wrist_decoder = torch.hub.load(
                 ".", # path to hubconf.py
                 self.wrist_decoder_name, 
