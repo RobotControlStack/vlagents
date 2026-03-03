@@ -165,8 +165,6 @@ class VjepaAC(Agent):
         from inference.utils.world_model_wrapper import WorldModel
 
         self.device = self.cfg.get("device", "cuda")
-        self.goal_img = self.cfg.get("goal_img", None)
-        self.goal_img_wrist = self.cfg.get("goal_img_wrist", None)
 
         # model config 
         cfgs_model = self.cfg.get("model")
@@ -215,7 +213,6 @@ class VjepaAC(Agent):
         warm_starting = cfgs_exp_args.get("warm-starting", False)
         decoupled_action = cfgs_exp_args.get("decoupled_action", False)
         best_actionpredictor = cfgs_exp_args.get("best_actionpredictor", False)
-        exp_name = cfgs_exp_args.get("exp_name", "random_emp")
 
         # Initialize transform (random-resize-crop augmentations)
         transform = make_transforms(
@@ -228,8 +225,7 @@ class VjepaAC(Agent):
             crop_size=crop_size,
         )
 
-        # --side encoder and predictor
-        # load released model
+        # load encoder released model
         encoder, predictor = torch.hub.load(
             ".", # path to hubconf.py
             side_model_name, 
@@ -238,15 +234,14 @@ class VjepaAC(Agent):
             load_encoder=True,
             load_predictor=True if self.goal_img else False
         )
-
-        # load model to cuda
         encoder.to(self.device).eval()
         tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
 
+        # --  side predictor
         if self.goal_img:
             predictor.to(self.device).eval()
 
-        # --wrist predictor
+        # -- only wrist predictor
         wrist_predictor = None
         if self.goal_img_wrist:
             # -- init model
@@ -308,7 +303,7 @@ class VjepaAC(Agent):
             transform=transform,
             goal_rep=None,
             goal_rep_wrist=None,
-            exp_name=exp_name,
+            exp_name=self.exp,
             log_recons=log_recons,
             log_objective_loss=log_objective_loss,
             decoupled_action=decoupled_action,
@@ -337,13 +332,13 @@ class VjepaAC(Agent):
                 )
 
             side_img = None
-            if self.goal_img:
+            if self.goal_rep:
                 side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
                 side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
                 side_img = decode_jpeg(side)
 
             wrist_img = None
-            if self.goal_img_wrist:
+            if self.goal_rep_wrist:
                 wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
                 wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
                 wrist_img = decode_jpeg(wrist)
@@ -370,43 +365,26 @@ class VjepaAC(Agent):
         super().reset(obs, instruction, **kwargs)
         # imports
         import torch
+        from torchvision.io import decode_jpeg
 
-        goal_rep = None
-        if self.goal_img:
-            img = Image.open(self.goal_img)
+        self.exp = instruction
 
-            # alpha channel check
-            goal_image = np.array(img)
-
-            if goal_image.ndim == 3 and goal_image.shape[2] == 4:
-                logging.warning("goal image has 4 channels, " \
-                "converting to 3 channels by dropping alpha channel")
-                # take only rgb channels
-                goal_image = goal_image[:, :, :3]
-            
-            goal_image_tensor = torch.tensor(goal_image)
-
-            with torch.no_grad():
-                goal_rep = self.world_model.encode(goal_image_tensor)
-
-        goal_rep_wrist = None
-        if self.goal_img_wrist:
-            img_wrist = Image.open(self.goal_img_wrist)
-
-            goal_image_wrist = np.array(img_wrist)
-            if goal_image_wrist.ndim == 3 and goal_image_wrist.shape[2] == 4:
-                logging.warning("goal image has 4 channels, " \
-                "converting to 3 channels by dropping alpha channel")
-                goal_image_wrist = goal_image_wrist[:, :, :3]
-
-            goal_image_wrist_tensor = torch.tensor(goal_image_wrist)
-
-            with torch.no_grad():
-                goal_rep_wrist = self.world_model.encode(goal_image_wrist_tensor)
+        self.goal_rep = None
+        if "rgb_side" in obs.cameras:
+            goal_image = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
+            goal_image = torch.frombuffer(bytearray(goal_image), dtype=torch.uint8)
+            self.goal_rep = self.world_model.encode(decode_jpeg(goal_image))
+        
+        self.goal_rep_wrist = None
+        if "rgb_wrist" in obs.cameras:
+            goal_wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
+            goal_wrist = torch.frombuffer(bytearray(goal_wrist), dtype=torch.uint8)
+            self.goal_rep_wrist = self.world_model.encode(decode_jpeg(goal_wrist))
 
         self.prev_action = None
         if hasattr(self, "world_model"):
-            self.world_model.reset_logs(goal_rep=goal_rep, goal_rep_wrist=goal_rep_wrist)
+            self.world_model.reset_logs(goal_rep=self.goal_rep, 
+                                        goal_rep_wrist=self.goal_rep_wrist)
 
         return {}
 
