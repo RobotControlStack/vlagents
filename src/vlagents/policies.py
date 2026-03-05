@@ -213,8 +213,6 @@ class VjepaAC(Agent):
         cfgs_exp_args = self.cfg.get("exp")
         objective = cfgs_exp_args.get("objective", "l1")
         warm_starting = cfgs_exp_args.get("warm-starting", False)
-        decoupled_action = cfgs_exp_args.get("decoupled_action", False)
-        best_actionpredictor = cfgs_exp_args.get("best_actionpredictor", False)
 
         # Initialize transform (random-resize-crop augmentations)
         transform = make_transforms(
@@ -298,8 +296,6 @@ class VjepaAC(Agent):
             transform=transform,
             log_recons=log_recons,
             log_objective_loss=log_objective_loss,
-            decoupled_action=decoupled_action,
-            best_actionpredictor=best_actionpredictor
         )
 
     def act(self, obs: Obs) -> Act:
