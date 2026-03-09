@@ -65,7 +65,7 @@ class ClientAgent(RemoteAgent):
             obs_struct = self.get_obs(obs)
             action = self.act(obs_struct)
             end_time = time.perf_counter()
-            #time.sleep(0.01)  # to avoid overloading the server    
+            time.sleep(0.25)  # to avoid overloading the server    
             times.append(end_time - start_time)
         avg_time = sum(times) / runs
         max_time = max(times)
@@ -87,7 +87,7 @@ class ClientAgent(RemoteAgent):
 
 if __name__ == "__main__":
     port = 20997
-    local = True
+    local = False
     if local == True:
     # test local connection
         host = "localhost"
@@ -95,12 +95,15 @@ if __name__ == "__main__":
         on_same_machine = True
     else:
     # test remote connection
-        host = "airtower.utn-mi.de"
+        #host = "airtower.utn-mi.de"
+        host = "multihead.utn-mi.de"
         model = "test"
         on_same_machine = False
+    imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
+    output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
     imgs_path_dict = {
-        "side": "/home/epez82ox/repos/imgs/side_observer_30.png",
-        "wrist": "/home/epez82ox/repos/imgs/side_right_30.png"
+        "side": f"{imgs_folder_path}/side_observer_30.png",
+        "wrist": f"{imgs_folder_path}/side_right_30.png"
     }
     image_size = (224, 224, 3)
     #image_size = (720, 1280, 3)
@@ -113,9 +116,8 @@ if __name__ == "__main__":
     # save results to json file
     import json
     import os
-    dir_path = "/home/epez82ox/repos/time_benchmarks"
-    os.makedirs(dir_path, exist_ok=True)
-    json_path = f"{dir_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{image_size[0]}x{image_size[1]}.json"
+    os.makedirs(output_folder_path, exist_ok=True)
+    json_path = f"{output_folder_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{image_size[0]}x{image_size[1]}.json"
     with open(json_path, "w") as f:
         json.dump(results_benchmark, f, indent=4)
     print(f"Benchmark results saved to {json_path}")
