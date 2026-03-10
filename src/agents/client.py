@@ -59,9 +59,21 @@ class RemoteAgent(Agent):
 
     def act(self, obs: Obs) -> Act:
         obs = self._to_shared_memory(obs)
+        #import time
+        #t1 = time.perf_counter()
         obs = json_numpy.dumps(asdict(obs))
+        #t2 = time.perf_counter()
         # action, done, info
-        return dataclass_from_dict(Act, json_numpy.loads(self.c.root.act(obs)))
+        response = self.c.root.act(obs)
+        #t3 = time.perf_counter()
+        result = dataclass_from_dict(Act, json_numpy.loads(response))
+        #t4 = time.perf_counter()
+        # print(f"obs serialization took {t2 - t1:.4f} seconds")
+        # print(f"rpc roundtrip took {t3 - t2:.4f} seconds")
+        # print(f"result deserialization took {t4 - t3:.4f} seconds")
+
+
+        return result
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         obs = self._to_shared_memory(obs)

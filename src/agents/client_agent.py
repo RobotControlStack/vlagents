@@ -10,10 +10,13 @@ from agents.client import RemoteAgent
 from agents.policies import Obs
 
 class ClientAgent(RemoteAgent):
-    def __init__(self, host: str= "airtower.utn-mi.de", port: int= 20997, model: str = "test_exp", on_same_machine: bool = False):
+    def __init__(self, host: str= "airtower.utn-mi.de", 
+                 port: int= 20997,
+                 model: str = "test_exp",
+                 on_same_machine: bool = False):
         super().__init__(host, port, model, on_same_machine)
 
-    def get_obs(self, obs: dict, reset=False) -> Obs:
+    def get_obs(self, obs: dict, is_compressed=False) -> Obs:
 
         side = obs["frames"]["side"]["rgb"]["data"]
         wrist = obs["frames"]["wrist"]["rgb"]["data"]
@@ -21,20 +24,42 @@ class ClientAgent(RemoteAgent):
             return Obs(cameras=dict(rgb_side=side, rgb_wrist=wrist),
                        gripper=obs["gripper"], info=dict(joints=obs["joints"]))
         else:
-            # encode to jpeg to reduce the size
-            # with jpeg encoding 70 - 80 Hz transfer speed, without 17 fps
-            side_bytes = io.BytesIO()
-            Image.fromarray(
-                side
-            ).save(side_bytes, format="JPEG", quality=80)
+            if is_compressed:
+                # encode to jpeg to reduce the size
+                # with jpeg encoding 70 - 80 Hz transfer speed, without 17 fps
+                side_bytes = io.BytesIO()
+                Image.fromarray(
+                    side
+                ).save(side_bytes, format="JPEG", quality=80)
 
-            wrist_bytes = io.BytesIO()
-            Image.fromarray(
-                wrist
-            ).save(wrist_bytes, format="JPEG", quality=80)
+                wrist_bytes = io.BytesIO()
+                Image.fromarray(
+                    wrist
+                ).save(wrist_bytes, format="JPEG", quality=80)
 
-            return Obs(cameras=dict(rgb_side=base64.urlsafe_b64encode(side_bytes.getvalue()).decode("utf-8"), rgb_wrist=base64.urlsafe_b64encode(wrist_bytes.getvalue()).decode("utf-8")),
-                    gripper=obs["gripper"], info=dict(joints=obs["joints"]))
+
+                side_jpeg = side_bytes.getvalue()
+                side_b64 = base64.urlsafe_b64encode(side_jpeg).decode("utf-8")
+
+                # print("SIDE")
+                # print("raw:", side.nbytes)
+                # print("jpeg:", len(side_jpeg))
+                # print("base64:", len(side_b64))
+
+                wrist_jpeg = wrist_bytes.getvalue()
+                wrist_b64 = base64.urlsafe_b64encode(wrist_jpeg).decode("utf-8")
+
+                # print("WRIST")
+                # print("raw:", wrist.nbytes)
+                # print("jpeg:", len(wrist_jpeg))
+                # print("base64:", len(wrist_b64))
+
+            else:
+                side_b64 = side
+                wrist_b64 = wrist
+
+            return Obs(cameras=dict(rgb_side=side_b64, rgb_wrist=wrist_b64),
+                    gripper=obs["gripper"], info=dict(joints=obs["joints"], is_compressed=is_compressed))
 
     def load_obs(self, imgs_path_dict, images_size):
         obs = {}
@@ -55,17 +80,17 @@ class ClientAgent(RemoteAgent):
         return obs
 
     # run round trip 1000 time and save average time max and min time
-    def benchmark(self, imgs_path_dict, images_size, runs: int = 1000):
+    def benchmark(self, imgs_path_dict, images_size, runs: int = 1000, is_compressed=True):
         times = []
         obs = self.load_obs(imgs_path_dict, images_size)
-        obs_struct = self.get_obs(obs)
+        obs_struct = self.get_obs(obs, is_compressed=is_compressed)
         self.reset(obs_struct, instruction="pick and place", on_same_machine=self.on_same_machine)
         for _ in tqdm(range(runs)):
             start_time = time.perf_counter()
-            obs_struct = self.get_obs(obs)
+            obs_struct = self.get_obs(obs, is_compressed=is_compressed)
             action = self.act(obs_struct)
             end_time = time.perf_counter()
-            time.sleep(0.25)  # to avoid overloading the server    
+            #time.sleep(0.25)  # to avoid overloading the server    
             times.append(end_time - start_time)
         avg_time = sum(times) / runs
         max_time = max(times)
@@ -88,6 +113,7 @@ class ClientAgent(RemoteAgent):
 if __name__ == "__main__":
     port = 20997
     local = False
+    is_compressed = True
     if local == True:
     # test local connection
         host = "localhost"
