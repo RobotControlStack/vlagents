@@ -64,10 +64,10 @@ class ClientAgent(RemoteAgent):
     def load_obs(self, imgs_path_dict, images_size):
         obs = {}
         side = np.array(Image.open(imgs_path_dict["side"]).resize((images_size[1], images_size[0])))
-        print("side shape", side.shape)
+        #print("side shape", side.shape)
         wrist = np.array(Image.open(imgs_path_dict["wrist"]).resize((images_size[1], images_size[0])))
-        print("wrist shape", wrist.shape)
-        print(side.min(), side.max(), wrist.min(), wrist.max())
+        #print("wrist shape", wrist.shape)
+        #print(side.min(), side.max(), wrist.min(), wrist.max())
         # example obs
         obs = {
             "frames": {
@@ -95,16 +95,15 @@ class ClientAgent(RemoteAgent):
         avg_time = sum(times) / runs
         max_time = max(times)
         min_time = min(times)
-        print(f"Average time for get_obs and act() over {runs} runs: {avg_time:.4f} seconds")
-        print(f"Max time for get_obs and act(): {max_time:.4f} seconds")
-        print(f"Min time for get_obs and act(): {min_time:.4f} seconds")
-        print("standard deviation:", np.std(np.array(times)))
+        print(f"avg: {avg_time:.4f} seconds")
+        print(f"max: {max_time:.4f} seconds")
+        print(f"min: {min_time:.4f} seconds")
+        print("std:", np.std(np.array(times)))
         results = {
-            
-            "average_time": avg_time,
-            "max_time": max_time,
-            "min_time": min_time,
-            "std_dev": np.std(np.array(times)),
+            "avg": avg_time,
+            "max": max_time,
+            "min": min_time,
+            "std": np.std(np.array(times)),
             "times": times,
         }
         return results
@@ -112,38 +111,45 @@ class ClientAgent(RemoteAgent):
 
 if __name__ == "__main__":
     port = 20997
-    local = False
+    on_same_machine = False
     is_compressed = True
-    if local == True:
+    model_name = "vlagents"
+    runs = 1000
+    if on_same_machine == True:
     # test local connection
         host = "localhost"
         model = "test"
-        on_same_machine = True
     else:
     # test remote connection
         #host = "airtower.utn-mi.de"
         host = "multihead.utn-mi.de"
         model = "test"
-        on_same_machine = False
     imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
     output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
     imgs_path_dict = {
         "side": f"{imgs_folder_path}/side_observer_30.png",
         "wrist": f"{imgs_folder_path}/side_right_30.png"
     }
-    image_size = (224, 224, 3)
-    #image_size = (720, 1280, 3)
+    #image_size = (224, 224, 3)
+    image_size = (720, 1280, 3)
     # Create the client agent and run the benchmark
-    print("VLAgent")
+    print("model:", model_name)
     print("on_same_machine:", on_same_machine)
     print("image size:", image_size)
+    print("is_compressed:", is_compressed)
+    print("runs:", runs)
     client_agent = ClientAgent(host=host, port=port, model=model, on_same_machine=on_same_machine)
-    results_benchmark = client_agent.benchmark(imgs_path_dict, image_size, runs=1000)
+    results_benchmark = client_agent.benchmark(imgs_path_dict, image_size, runs=runs, is_compressed=is_compressed)
+    results_benchmark["model"] = model_name
+    results_benchmark["on_same_machine"] = on_same_machine
+    results_benchmark["is_compressed"] = is_compressed
+    results_benchmark["image_size"] = image_size
+    results_benchmark["runs"] = runs
     # save results to json file
     import json
     import os
     os.makedirs(output_folder_path, exist_ok=True)
-    json_path = f"{output_folder_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
+    json_path = f"{output_folder_path}/benchmark_results_{model_name}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
     with open(json_path, "w") as f:
         json.dump(results_benchmark, f, indent=4)
     print(f"Benchmark results saved to {json_path}")
