@@ -95,9 +95,9 @@ class ClientAgent(RemoteAgent):
         avg_time = sum(times) / runs
         max_time = max(times)
         min_time = min(times)
-        print(f"avg: {avg_time:.4f} seconds")
-        print(f"max: {max_time:.4f} seconds")
-        print(f"min: {min_time:.4f} seconds")
+        print(f"avg: {avg_time:.6f} seconds")
+        print(f"max: {max_time:.6f} seconds")
+        print(f"min: {min_time:.6f} seconds")
         print("std:", np.std(np.array(times)))
         results = {
             "avg": avg_time,
@@ -112,44 +112,48 @@ class ClientAgent(RemoteAgent):
 if __name__ == "__main__":
     port = 20997
     on_same_machine = False
-    is_compressed = True
+    #is_compressed = False
+    #image_size = (224, 224, 3)
+    #image_size = (720, 1280, 3)
     model_name = "vlagents"
     runs = 1000
-    if on_same_machine == True:
-    # test local connection
-        host = "localhost"
-        model = "test"
-    else:
-    # test remote connection
-        #host = "airtower.utn-mi.de"
-        host = "multihead.utn-mi.de"
-        model = "test"
-    imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
-    output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
-    imgs_path_dict = {
-        "side": f"{imgs_folder_path}/side_observer_30.png",
-        "wrist": f"{imgs_folder_path}/side_right_30.png"
-    }
-    #image_size = (224, 224, 3)
-    image_size = (720, 1280, 3)
-    # Create the client agent and run the benchmark
-    print("model:", model_name)
-    print("on_same_machine:", on_same_machine)
-    print("image size:", image_size)
-    print("is_compressed:", is_compressed)
-    print("runs:", runs)
-    client_agent = ClientAgent(host=host, port=port, model=model, on_same_machine=on_same_machine)
-    results_benchmark = client_agent.benchmark(imgs_path_dict, image_size, runs=runs, is_compressed=is_compressed)
-    results_benchmark["model"] = model_name
-    results_benchmark["on_same_machine"] = on_same_machine
-    results_benchmark["is_compressed"] = is_compressed
-    results_benchmark["image_size"] = image_size
-    results_benchmark["runs"] = runs
-    # save results to json file
-    import json
-    import os
-    os.makedirs(output_folder_path, exist_ok=True)
-    json_path = f"{output_folder_path}/benchmark_results_{model_name}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
-    with open(json_path, "w") as f:
-        json.dump(results_benchmark, f, indent=4)
-    print(f"Benchmark results saved to {json_path}")
+    for image_size in [(224, 224, 3), (720, 1280, 3)]:
+        for is_compressed in [False, True]:
+            if on_same_machine == True:
+            # test local connection
+                host = "localhost"
+                model = "test"
+            else:
+            # test remote connection
+                #host = "airtower.utn-mi.de"
+                host = "multihead.utn-mi.de"
+                model = "test"
+            imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
+            output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
+            imgs_path_dict = {
+                "side": f"{imgs_folder_path}/side_observer_30.png",
+                "wrist": f"{imgs_folder_path}/side_right_30.png"
+            }
+
+            # Create the client agent and run the benchmark
+            print("model:", model_name)
+            print("on_same_machine:", on_same_machine)
+            print("image size:", image_size)
+            print("is_compressed:", is_compressed)
+            print("runs:", runs)
+            client_agent = ClientAgent(host=host, port=port, model=model, on_same_machine=on_same_machine)
+            results_benchmark = client_agent.benchmark(imgs_path_dict, image_size, runs=runs, is_compressed=is_compressed)
+            results_benchmark["model"] = model_name
+            results_benchmark["on_same_machine"] = on_same_machine
+            results_benchmark["is_compressed"] = is_compressed
+            results_benchmark["image_size"] = image_size
+            results_benchmark["runs"] = runs
+            # save results to json file
+            import json
+            import os
+            os.makedirs(output_folder_path, exist_ok=True)
+            json_path = f"{output_folder_path}/benchmark_results_{model_name}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
+            with open(json_path, "w") as f:
+                json.dump(results_benchmark, f, indent=4)
+            print(f"Benchmark results saved to {json_path}")
+            time.sleep(5)  # to avoid overloading the server
