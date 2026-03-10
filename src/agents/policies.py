@@ -116,10 +116,10 @@ class TestAgent(Agent):
                 #"data": {k: v for k, v in obs.cameras.items()},
             }
         else:
-            compression_flag = obs.info.get("is_compressed", True)
-            logging.info(f"TestAgent.act received compression flag: {compression_flag}")
-            if compression_flag:
-                
+            is_compressed = obs.info.get("is_compressed", True)
+            logging.info(f"TestAgent.act received is_compressed: {is_compressed}")
+            if is_compressed:
+
                 side_b64 = obs.cameras["rgb_side"]
                 # print("base64 bytes:", len(side_b64))
                 side_jpeg = base64.urlsafe_b64decode(side_b64)
