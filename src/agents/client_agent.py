@@ -143,7 +143,7 @@ if __name__ == "__main__":
     import json
     import os
     os.makedirs(output_folder_path, exist_ok=True)
-    json_path = f"{output_folder_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{image_size[0]}x{image_size[1]}.json"
+    json_path = f"{output_folder_path}/benchmark_results_{model}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
     with open(json_path, "w") as f:
         json.dump(results_benchmark, f, indent=4)
     print(f"Benchmark results saved to {json_path}")
