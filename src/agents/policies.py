@@ -116,15 +116,65 @@ class TestAgent(Agent):
                 #"data": {k: v for k, v in obs.cameras.items()},
             }
         else:
-            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-            side = decode_jpeg(side)
-            side = v2.Resize((256, 256))(side)
+            compression_flag = obs.info.get("is_compressed", True)
+            logging.info(f"TestAgent.act received compression flag: {compression_flag}")
+            if compression_flag:
+                
+                side_b64 = obs.cameras["rgb_side"]
+                # print("base64 bytes:", len(side_b64))
+                side_jpeg = base64.urlsafe_b64decode(side_b64)
+                # print("jpeg bytes:", len(side_jpeg))
+                side_tensor = torch.frombuffer(bytearray(side_jpeg), dtype=torch.uint8)
+                side_img = decode_jpeg(side_tensor)
+                # print("decoded shape:", side_img.shape)
+                # print("decoded bytes:", side_img.numel())
+                
+                # Resize costs 165 - 176 ms
+                # side_img = v2.Resize((256,256))(side_img)
 
-            wrist = base64.urlsafe_b64decode(obs.cameras["rgb_wrist"])
-            wrist = torch.frombuffer(bytearray(wrist), dtype=torch.uint8)
-            wrist = decode_jpeg(wrist)
-            wrist = v2.Resize((256, 256))(wrist)
+                # print("resized shape:", side_img.shape)
+                # print("resized bytes:", side_img.numel())
+
+                wrist_b64 = obs.cameras["rgb_wrist"]
+                # print("base64 bytes:", len(wrist_b64))
+                wrist_jpeg = base64.urlsafe_b64decode(wrist_b64)
+                # print("jpeg bytes:", len(wrist_jpeg))
+                wrist_tensor = torch.frombuffer(bytearray(wrist_jpeg), dtype=torch.uint8)
+                wrist_img = decode_jpeg(wrist_tensor)
+                # print("decoded shape:", wrist_img.shape)
+                # print("decoded bytes:", wrist_img.numel())
+                
+                # Resize costs 165 - 176 ms                
+                # wrist_img = v2.Resize((256,256))(wrist_img)
+                
+                # print("resized shape:", wrist_img.shape)
+                # print("resized bytes:", wrist_img.numel())
+
+            else:
+                import time
+                t0 = time.perf_counter()
+
+                # receive obs
+                side = obs.cameras["rgb_side"]
+                wrist = obs.cameras["rgb_wrist"]
+
+                #t1 = time.perf_counter()
+
+                # side = torch.from_numpy(side)
+                # wrist = torch.from_numpy(wrist)
+
+                #t2 = time.perf_counter()
+                # Resize costs 165 - 176 ms                
+                # side = v2.Resize((256,256))(side)
+                # wrist = v2.Resize((256,256))(wrist)
+
+                #t3 = time.perf_counter()
+
+                #print("obs field access:", (t1 - t0)*1000, "ms")
+                #print("torch conversion:", (t2 - t1)*1000, "ms")
+                #print("resize:", (t3 - t2)*1000, "ms")
+
+
             info = {
             }
         self.i += 1
