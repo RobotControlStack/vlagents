@@ -178,7 +178,7 @@ class TestAgent(Agent):
             info = {
             }
         self.i += 1
-        a = Act(action=np.array([0, 0, 0, 0, 0, 0, self.i % 2], dtype=np.float32), done=False, info=info)
+        a = Act(action=np.zeros((50, 8), dtype=np.float32), done=False, info=info)
         return a
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
@@ -187,7 +187,7 @@ class TestAgent(Agent):
             logging.info("TestAgent.reset called with on_same_machine=True")
         super().reset(obs, instruction, **kwargs)
         if self.on_same_machine:
-            logging.info("TestAgent.reset using shared memory for cameras")
+            logging.info("TestAgent.reset using shared_memory for cameras")
             info = {
                 # "shapes": {k: v.shape for k, v in obs.cameras.items()},
                 # "dtype": {k: v.dtype.name for k, v in obs.cameras.items()},
