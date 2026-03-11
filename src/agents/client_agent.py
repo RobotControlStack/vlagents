@@ -108,26 +108,33 @@ class ClientAgent(RemoteAgent):
         }
         return results
 
+def parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="Client agent for benchmarking")
+    parser.add_argument("--host", type=str, default="multihead.utn-mi.de", help="Host of the server")
+    parser.add_argument("--port", type=int, default=20997, help="Port of the server")
+    parser.add_argument("--model", type=str, default="test", help="Model name to use on the server")
+    parser.add_argument("--on_same_machine", action="store_true", help="Whether the client is running on the same machine as the server")
+    parser.add_argument("--runs", type=int, default=1000, help="Number of runs for the benchmark")
+    return parser.parse_args()
 
 if __name__ == "__main__":
-    port = 20997
-    on_same_machine = False
+    args = parse_args()
+    port = args.port
+    on_same_machine = args.on_same_machine
     #is_compressed = False
     #image_size = (224, 224, 3)
     #image_size = (720, 1280, 3)
+    if args.on_same_machine:
+        host = "localhost"
+    else:
+        host = args.host
+    model = args.model
     model_name = "vlagents"
-    runs = 1000
+    runs = args.runs
     for image_size in [(224, 224, 3), (720, 1280, 3)]:
         for is_compressed in [False, True]:
-            if on_same_machine == True:
-            # test local connection
-                host = "localhost"
-                model = "test"
-            else:
-            # test remote connection
-                #host = "airtower.utn-mi.de"
-                host = "multihead.utn-mi.de"
-                model = "test"
+
             imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
             output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
             imgs_path_dict = {
@@ -157,3 +164,8 @@ if __name__ == "__main__":
                 json.dump(results_benchmark, f, indent=4)
             print(f"Benchmark results saved to {json_path}")
             time.sleep(5)  # to avoid overloading the server
+# Example command to run the benchmark:
+# For local testing (client and server on the same machine):
+# python agents/src/agents/client_agent.py --on_same_machine --model test --runs 1000 --port 20997
+# For remote testing:
+# python agents/src/agents/client_agent.py --host multihead.utn-mi.de --port 20997 --model test --runs 1000
