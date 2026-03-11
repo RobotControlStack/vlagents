@@ -116,6 +116,9 @@ def parse_args():
     parser.add_argument("--model", type=str, default="test", help="Model name to use on the server")
     parser.add_argument("--on_same_machine", action="store_true", help="Whether the client is running on the same machine as the server")
     parser.add_argument("--runs", type=int, default=1000, help="Number of runs for the benchmark")
+    parser.add_argument("--imgs_folder_path", type=str, default="/home/gamal/vlagent_benchmark/imgs", help="Path to the folder containing the images for benchmarking")
+    parser.add_argument("--output_folder_path", type=str, default="/home/gamal/vlagent_benchmark/outputs", help="Path to the folder where benchmark results will be saved")
+
     return parser.parse_args()
 
 if __name__ == "__main__":
@@ -132,11 +135,12 @@ if __name__ == "__main__":
     model = args.model
     model_name = "vlagents"
     runs = args.runs
+    imgs_folder_path = args.imgs_folder_path
+    output_folder_path = args.output_folder_path
     for image_size in [(224, 224, 3), (720, 1280, 3)]:
         for is_compressed in [False, True]:
 
-            imgs_folder_path = "/home/gamal/vlagent_benchmark/imgs"
-            output_folder_path = "/home/gamal/vlagent_benchmark/outputs/vlagents"
+
             imgs_path_dict = {
                 "side": f"{imgs_folder_path}/side_observer_30.png",
                 "wrist": f"{imgs_folder_path}/side_right_30.png"
@@ -166,6 +170,9 @@ if __name__ == "__main__":
             time.sleep(5)  # to avoid overloading the server
 # Example command to run the benchmark:
 # For local testing (client and server on the same machine):
-# python agents/src/agents/client_agent.py --on_same_machine --model test --runs 1000 --port 20997
+# python agents/src/agents/client_agent.py --on_same_machine --model test --runs 1000 --port 20997 --imgs_folder_path /home/gamal/vlagent_benchmark/imgs --output_folder_path /home/gamal/vlagent_benchmark/outputs
 # For remote testing:
-# python agents/src/agents/client_agent.py --host multihead.utn-mi.de --port 20997 --model test --runs 1000
+# python agents/src/agents/client_agent.py --host multihead.utn-mi.de --port 20997 --model test --runs 1000 --imgs_folder_path /home/gamal/vlagent_benchmark/imgs --output_folder_path /home/gamal/vlagent_benchmark/outputs
+
+# Server side command to run the dummy policy server:
+# python -m agents start-server test --port=20997 --host=0.0.0.0 --kwargs='{"checkpoint_path": "/home/epez82ox/repos/pi0_droid_pytorch_29999"}'
