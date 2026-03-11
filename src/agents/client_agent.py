@@ -2,6 +2,8 @@ from typing import Any
 import io
 import base64
 import time
+import json
+import os
 
 from PIL import Image
 import numpy as np
@@ -137,6 +139,10 @@ if __name__ == "__main__":
     runs = args.runs
     imgs_folder_path = args.imgs_folder_path
     output_folder_path = args.output_folder_path
+
+    os.makedirs(output_folder_path, exist_ok=True)
+    output_folder_path = os.path.join(output_folder_path, model_name)
+    os.makedirs(output_folder_path, exist_ok=True)
     for image_size in [(224, 224, 3), (720, 1280, 3)]:
         for is_compressed in [False, True]:
 
@@ -160,9 +166,6 @@ if __name__ == "__main__":
             results_benchmark["image_size"] = image_size
             results_benchmark["runs"] = runs
             # save results to json file
-            import json
-            import os
-            os.makedirs(output_folder_path, exist_ok=True)
             json_path = f"{output_folder_path}/benchmark_results_{model_name}_{'local' if on_same_machine else 'remote'}_{'compressed' if is_compressed else 'uncompressed'}_{image_size[0]}x{image_size[1]}.json"
             with open(json_path, "w") as f:
                 json.dump(results_benchmark, f, indent=4)
