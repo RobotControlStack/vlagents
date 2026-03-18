@@ -286,6 +286,7 @@ class LerobotPiModel(Agent):
         print("Initializing LeRobotPolicy with path:", self.default_checkpoint_path)
         print("default_checkpoint_path:", self.default_checkpoint_path)
         self.policy = LeRobotPolicy(cfg=cfg)
+        self.cfg = cfg
         print("LeRobotPolicy initialized")
 
     def act(self, obs: Obs) -> Act:
@@ -305,6 +306,8 @@ class LerobotPiModel(Agent):
         wrist = v2.Resize((256, 256))(wrist)
         if isinstance(obs.gripper, np.ndarray) or isinstance(obs.gripper, list):
             gripper_val = obs.gripper[0]
+        else:
+            gripper_val = obs.gripper
         state = torch.tensor(np.concatenate([obs.info["joints"], [1-gripper_val]]))
         if obs.info.get("prev_chunk_left_over", None) is None:
             prev_left = None
@@ -330,6 +333,9 @@ class LerobotPiModel(Agent):
         return Act(action=post, original_action=orig)
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        self.cfg.rtc.enabled = kwargs.get("is_rtc", False)
+        self.cfg.rtc.execution_horizon = kwargs.get("execution_horizon", self.cfg.rtc.execution_horizon)
+        self.cfg.rtc.max_guidance_weight = kwargs.get("max_guidance_weight", self.cfg.rtc.max_guidance_weight)
         info = super().reset(obs, instruction, **kwargs)
         print("Resetting LerobotPiModel with instruction:", instruction)
         return info
