@@ -185,7 +185,7 @@ class OpenPiModel(Agent):
     def act(self, obs: Obs) -> Act:
         # Run inference on a dummy example.
         # observation = {f"observation/{k}": v for k, v in obs.cameras.items()}
-        if not self.policy.is_rtc:
+        if not (self.policy.is_rtc or self.is_chunks):
             if self.s < self.chunks:
                 self.s += 1
                 return Act(action=self.a[self.s])
@@ -245,7 +245,7 @@ class OpenPiModel(Agent):
             _, csv_path = self.chunk_saver.save(action_chunk_np)
             print(f"[chunk] RAW saved -> {csv_path}  ({elapsed:.3f}s)")
 
-        if self.policy.is_rtc:
+        if self.policy.is_rtc or self.is_chunks:
             return Act(action=action_chunk, info={"inference_time_s": float(elapsed)})
         return Act(action=action_chunk[0], info={"inference_time_s": float(elapsed)})
 
@@ -256,6 +256,7 @@ class OpenPiModel(Agent):
         self.policy.s = kwargs.get("s", None)
         self.policy.d = kwargs.get("d", None)
         self.save_chunks = kwargs.get("save_chunks", False)
+        self.is_chunks = kwargs.get("is_chunks", False)
         dbg_folder_name = kwargs.get("dbg_folder_name", "dbg_chunks")
         if self.save_chunks and dbg_folder_name is not None:
             from agents.utils.save_chunks import ChunkSaverMin
@@ -327,6 +328,8 @@ class LerobotPiModel(Agent):
         post, orig = self.policy.infer(
             observation, prev_chunk_left_over=prev_left, inference_delay=inference_delay
         )
+        post[:,-1] = 1 - post[:,-1]
+
         return Act(action=post, original_action=orig)
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
