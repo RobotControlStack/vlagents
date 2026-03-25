@@ -341,6 +341,9 @@ class LerobotPiModel(Agent):
         self.cfg.rtc.max_guidance_weight = kwargs.get("max_guidance_weight", self.cfg.rtc.max_guidance_weight)
         info = super().reset(obs, instruction, **kwargs)
         print("Resetting LerobotPiModel with instruction:", instruction)
+        print(f"RTC: {self.cfg.rtc.enabled}")
+        print(f"Execution Horizon: {self.cfg.rtc.execution_horizon}")
+        print(f"Max Guidance Weight: {self.cfg.rtc.max_guidance_weight}")
         return info
 
 class OpenVLAModel(Agent):
