@@ -241,12 +241,12 @@ class VjepaAC(Agent):
         import torch
         from torchvision.io import decode_jpeg
 
+        super().act(obs)
+
         with torch.no_grad():
 
             # read from camera-stream
-            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-            side = decode_jpeg(side)
+            side = obs.cameras["rgb_side"]
 
             # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
             side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
