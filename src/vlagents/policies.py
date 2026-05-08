@@ -34,6 +34,7 @@ class Obs:
     cameras: dict[str, np.ndarray | SharedMemoryPayload | str] = field(default_factory=dict)
     camera_data_type: str = CameraDataType.RAW
     gripper: float | None = None
+    state: np.array | None = None
     info: dict[str, Any] = field(default_factory=dict)
 
 
@@ -136,6 +137,69 @@ class TestAgent(Agent):
             "data": {k: v for k, v in obs.cameras.items()},
             "instruction": instruction,
         }
+        return info
+
+
+class LeRobotPolicy(Agent):
+
+    def __init__(
+        self,
+        policy_name: str = "pi05",
+        default_checkpoint_path: str = "lerobot/pi05_base",
+        device: str = "cuda:0",
+        **kwargs,
+    ) -> None:
+        super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
+
+        self.policy_name = policy_name
+        self.device = device
+        checkpoint_path = self.checkpoint_path or self.default_checkpoint_path
+        if self.checkpoint_step is not None:
+            checkpoint_path = checkpoint_path.format(checkpoint_step=self.checkpoint_step)
+        self.path = checkpoint_path
+
+    def initialize(self):
+        from lerobot.policies.factory import get_policy_class
+        from lerobot.policies.factory import make_pre_post_processors
+
+        self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
+
+        preprocessor_overrides = {
+            "device_processor": {"device": self.device},
+            # "rename_observations_processor": {"rename_map": self.cfg.rename_map},
+        }
+
+        self.preprocessor, self.postprocessor = make_pre_post_processors(
+            policy_cfg=self.policy.config,
+            pretrained_path=self.path,
+            preprocessor_overrides=preprocessor_overrides,
+        )
+
+    def act(self, obs: Obs) -> Act:
+        import torch
+
+        super().act(obs)
+
+        observation = {
+            "observation.state": obs.state,
+            "task": self.instruction,
+        }
+        for key in obs.cameras:
+            observation[f"observation.images.{key}"] = obs.cameras[key]
+
+        observation = self.preprocessor(observation)
+        with torch.inference_mode():
+            action = self.policy.select_action(observation)
+        action = self.postprocessor(action)
+
+        if isinstance(action, torch.Tensor):
+            action = action.detach().cpu().numpy()
+
+        return Act(action=np.asarray(action, dtype=np.float32))
+
+    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        info = super().reset(obs, instruction, **kwargs)
+        self.policy.reset()
         return info
 
 
