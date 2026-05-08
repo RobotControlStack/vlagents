@@ -34,6 +34,8 @@ class Obs:
     cameras: dict[str, np.ndarray | SharedMemoryPayload | str] = field(default_factory=dict)
     camera_data_type: str = CameraDataType.RAW
     gripper: float | None = None
+    # TODO: add context about what the state means, and its dimensions
+    # theoratically it would be joints, xyzrpy and absolute or relative
     state: np.array | None = None
     info: dict[str, Any] = field(default_factory=dict)
 

@@ -62,28 +62,33 @@ class EvaluatorEnv(ABC):
         raise NotImplementedError
 
 
-class RCSPickUpCubeEval(EvaluatorEnv):
-    INSTRUCTIONS = {
-        "rcs/FR3SimplePickUpSim-v0": "pick the green box",
-        "rcs/FR3LabPickUpSimDigitHand-v0": "pick the green box",
-    }
+class RCS(EvaluatorEnv):
+    INSTRUCTIONS = {}
 
-    def translate_obs(self, obs: dict[str, Any]) -> Obs:
+    def __init__(self, env_id, seed, **env_kwargs):
+        self.robot_keys: str = env_kwargs.pop("robot_keys")
+        super().__init__(env_id, seed, **env_kwargs)
+
+    def translate_obs(self, obs: dict[str, Any], info: dict[str, Any]) -> Obs:
         # does not include history
 
-        # side = obs["frames"]["arro"]["rgb"]["data"]
-        side = obs["frames"]["side"]["rgb"]["data"]
-        wrist = obs["frames"]["wrist"]["rgb"]["data"]
-        # depth_side = obs["frames"]["side"]["depth"]["data"],
+        cameras = {}
+        for key in obs["frames"]:
+            cameras[key] = obs["frames"][key]["rgb"]["data"]
+        state = []
+        for key in self.robot_keys:
+            state.append(obs[key]["joints"])
+            state.append(obs[key]["gripper"])
+
         return Obs(
-            cameras=dict(rgb_side=side, rgb_wrist=wrist),
-            # cameras=dict(rgb_side=side),
+            cameras=cameras,
             gripper=obs["gripper"],
-            info=dict(joints=obs["joints"]),
+            state=np.concatenate(state),
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
         # includes horizon
+        # TODO this should be joints
         if action.action.shape[0] != 7:
             obs, reward, success, truncated, info = self.env.step(
                 {"xyzrpy": action.action[0][:6], "gripper": action.action[0][6]}
@@ -106,11 +111,8 @@ class RCSPickUpCubeEval(EvaluatorEnv):
     @staticmethod
     def do_import():
         import rcs
-        import rcs_toolbox
+        import rcs_duobench
 
-
-EvaluatorEnv.register("rcs/FR3SimplePickUpSim-v0", RCSPickUpCubeEval)
-EvaluatorEnv.register("rcs/FR3LabPickUpSimDigitHand-v0", RCSPickUpCubeEval)
 
 
 class ManiSkill(EvaluatorEnv):
