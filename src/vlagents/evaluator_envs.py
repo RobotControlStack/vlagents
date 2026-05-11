@@ -62,16 +62,15 @@ class EvaluatorEnv(ABC):
         raise NotImplementedError
 
 
-class RCS(EvaluatorEnv):
+class RCSDuoBench(EvaluatorEnv):
     INSTRUCTIONS = {}
 
     def __init__(self, env_id, seed, **env_kwargs):
         self.robot_keys: str = env_kwargs.pop("robot_keys")
+        self.control_mode: str = env_kwargs.pop("control_mode", "joints")
         super().__init__(env_id, seed, **env_kwargs)
 
-    def translate_obs(self, obs: dict[str, Any], info: dict[str, Any]) -> Obs:
-        # does not include history
-
+    def translate_obs(self, obs: dict[str, Any]) -> Obs:
         cameras = {}
         for key in obs["frames"]:
             cameras[key] = obs["frames"][key]["rgb"]["data"]
@@ -87,21 +86,20 @@ class RCS(EvaluatorEnv):
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
-        # includes horizon
-        # TODO this should be joints
-        if action.action.shape[0] != 7:
-            obs, reward, success, truncated, info = self.env.step(
-                {"xyzrpy": action.action[0][:6], "gripper": action.action[0][6]}
-            )
-        else:
-            obs, reward, success, truncated, info = self.env.step(
-                {"xyzrpy": action.action[:6], "gripper": action.action[6]}
-            )
-        # print(action.action, obs["xyzrpy"], obs["gripper"])
-        return self.translate_obs(obs), reward, success, truncated, info
+        assert len(action.action.shape) == 1, "this function cannot deal with batches or action chunks, please return single actions"
+        env_action = {}
+        for idx, robot in enumerate(self.robot_keys):
+            if self.control_mode == "joints":
+                env_action[robot] = {"joints": action.action[idx*8:idx*8+7], "gripper": action.action[idx*8+7]}
+            else:
+                env_action[robot] = {"xyzrpy": action.action[idx*7:idx*7+6], "gripper": action.action[idx*7+6]}
+        obs, reward, success, truncated, info = self.env.step(env_action)
+        r = float(reward)
+        
+        return self.translate_obs(obs), r, success, truncated, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=seed, options=options)
         return self.translate_obs(obs), info
 
     @property
@@ -111,7 +109,7 @@ class RCS(EvaluatorEnv):
     @staticmethod
     def do_import():
         import rcs
-        import rcs_duobench
+        from rcs_duobench.configs import hinge_chest_config
 
 
 
