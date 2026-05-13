@@ -66,8 +66,9 @@ class RCSDuoBench(EvaluatorEnv):
     INSTRUCTIONS = {}
 
     def __init__(self, env_id, seed, **env_kwargs):
-        self.robot_keys: str = env_kwargs.pop("robot_keys")
+        self.robot_keys: str = env_kwargs.pop("robot_keys", ["left", "right"])
         self.control_mode: str = env_kwargs.pop("control_mode", "joints")
+        self._instruction: str | None = None
         super().__init__(env_id, seed, **env_kwargs)
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
@@ -81,7 +82,7 @@ class RCSDuoBench(EvaluatorEnv):
 
         return Obs(
             cameras=cameras,
-            gripper=obs["gripper"],
+            gripper=None,
             state=np.concatenate(state),
         )
 
@@ -90,9 +91,9 @@ class RCSDuoBench(EvaluatorEnv):
         env_action = {}
         for idx, robot in enumerate(self.robot_keys):
             if self.control_mode == "joints":
-                env_action[robot] = {"joints": action.action[idx*8:idx*8+7], "gripper": action.action[idx*8+7]}
+                env_action[robot] = {"joints": action.action[idx*8:idx*8+7], "gripper": action.action[idx*8+7:idx*8+8]}
             else:
-                env_action[robot] = {"xyzrpy": action.action[idx*7:idx*7+6], "gripper": action.action[idx*7+6]}
+                env_action[robot] = {"xyzrpy": action.action[idx*7:idx*7+6], "gripper": action.action[idx*7+6:idx*7+7]}
         obs, reward, success, truncated, info = self.env.step(env_action)
         r = float(reward)
         
@@ -100,18 +101,21 @@ class RCSDuoBench(EvaluatorEnv):
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
         obs, info = self.env.reset(seed=seed, options=options)
+        self._instruction = info["instruction"]
         return self.translate_obs(obs), info
 
     @property
     def language_instruction(self) -> str:
-        return self.INSTRUCTIONS[self.env_id]
+        assert self._instruction is not None
+        return self._instruction
 
     @staticmethod
     def do_import():
         import rcs
-        from rcs_duobench.configs import hinge_chest_config
+        from rcs_duobench.tasks import bin_sort
 
 
+EvaluatorEnv.register("duobench/bin_sort", RCSDuoBench)
 
 class ManiSkill(EvaluatorEnv):
     INSTRUCTIONS = {
@@ -523,7 +527,7 @@ def run_eval(
             [
                 "-m",
                 "vlagents",
-                "run-eval-post-training",
+                "run-eval",
                 f"--agent-cfg={json.dumps(asdict(agent_cfg))}",
                 f"--episodes={episodes}",
                 f"--n-processes={n_processes}",

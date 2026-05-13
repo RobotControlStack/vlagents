@@ -36,7 +36,7 @@ class Obs:
     gripper: float | None = None
     # TODO: add context about what the state means, and its dimensions
     # theoratically it would be joints, xyzrpy and absolute or relative
-    state: np.array | None = None
+    state: np.ndarray | None = None
     info: dict[str, Any] = field(default_factory=dict)
 
 
@@ -166,6 +166,9 @@ class LeRobotPolicy(Agent):
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
 
+        self.policy.to(self.device)
+        self.policy.eval()
+
         preprocessor_overrides = {
             "device_processor": {"device": self.device},
             # "rename_observations_processor": {"rename_map": self.cfg.rename_map},
@@ -183,13 +186,26 @@ class LeRobotPolicy(Agent):
         super().act(obs)
 
         observation = {
-            "observation.state": obs.state,
+            "observation.state": np.expand_dims(np.asarray(obs.state, dtype=np.float32), axis=0),
             "task": self.instruction,
         }
-        for key in obs.cameras:
-            observation[f"observation.images.{key}"] = obs.cameras[key]
+
+        for key, img_data in obs.cameras.items():
+            img = img_data.astype(np.float32) / 255.0
+            
+            if img.ndim == 3 and img.shape[-1] in [1, 3, 4]:
+                img = np.transpose(img, (2, 0, 1))
+                
+            img = np.expand_dims(img, axis=0)
+            observation[f"observation.images.{key}"] = img
 
         observation = self.preprocessor(observation)
+
+        for k, v in observation.items():
+            if isinstance(v, torch.Tensor):
+                observation[k] = v.to(self.device, non_blocking=True)
+
+
         with torch.inference_mode():
             action = self.policy.select_action(observation)
         action = self.postprocessor(action)
@@ -197,6 +213,7 @@ class LeRobotPolicy(Agent):
         if isinstance(action, torch.Tensor):
             action = action.detach().cpu().numpy()
 
+        action = np.squeeze(action, axis=0)
         return Act(action=np.asarray(action, dtype=np.float32))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
@@ -752,6 +769,7 @@ class OpenVLADistribution(OpenVLAModel):
 AGENTS = dict(
     test=TestAgent,
     octo=OctoModel,
+    lerobot=LeRobotPolicy,
     openvla=OpenVLAModel,
     octodist=OctoActionDistribution,
     openvladist=OpenVLADistribution,
