@@ -32,12 +32,10 @@ logging.basicConfig(
 class EvaluatorEnv(ABC):
     ENVS: dict[str, "EvaluatorEnv"] = {}
 
-    def __init__(self, env_id: str, seed: int, **env_kwargs) -> None:
+    def __init__(self, env_id: str, **env_kwargs) -> None:
         self.do_import()
         self.env = gym.make(env_id, **env_kwargs)
-        self.env.np_random = np.random.RandomState(seed=seed)
         self.env_id = env_id
-        self.seed = seed
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
         raise NotImplementedError
@@ -54,8 +52,8 @@ class EvaluatorEnv(ABC):
         EvaluatorEnv.ENVS[env_id] = env
 
     @staticmethod
-    def make(env_id: str, seed: int, **env_kwargs) -> "EvaluatorEnv":
-        return EvaluatorEnv.ENVS[env_id](env_id, seed, **env_kwargs)
+    def make(env_id: str, **env_kwargs) -> "EvaluatorEnv":
+        return EvaluatorEnv.ENVS[env_id](env_id, **env_kwargs)
 
     @staticmethod
     def do_import():
@@ -65,11 +63,11 @@ class EvaluatorEnv(ABC):
 class RCSDuoBench(EvaluatorEnv):
     INSTRUCTIONS = {}
 
-    def __init__(self, env_id, seed, **env_kwargs):
+    def __init__(self, env_id, **env_kwargs):
         self.robot_keys: str = env_kwargs.pop("robot_keys", ["left", "right"])
         self.control_mode: str = env_kwargs.pop("control_mode", "joints")
         self._instruction: str | None = None
-        super().__init__(env_id, seed, **env_kwargs)
+        super().__init__(env_id, **env_kwargs)
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
         cameras = {}
@@ -132,12 +130,12 @@ class ManiSkill(EvaluatorEnv):
         "PokeCube-v1": "push the cube by using the blue tool",
     }
 
-    def __init__(self, env_id, seed, **env_kwargs):
+    def __init__(self, env_id, **env_kwargs):
         # TODO: one could save only every nth episode by adding an episode counter which steps the record env only
         # when the counter is divisible by n otherwise steps the normal env
         logging.info(f"Creating ManiSkill env {env_id}")
         output_dir = env_kwargs.pop("video_dir", None)
-        super().__init__(env_id, seed, **env_kwargs)
+        super().__init__(env_id, **env_kwargs)
         logging.info(f"Created ManiSkill env {env_id}")
         if "human_render_camera_configs" in env_kwargs:
             self.env = HumanCameraWrapper(self.env)
@@ -206,7 +204,7 @@ EvaluatorEnv.register("PokeCube-v1", ManiSkill)
 
 class Libero(EvaluatorEnv):
 
-    def __init__(self, env_id: str, seed: int, reset_steps: int = 14, **env_kwargs) -> None:
+    def __init__(self, env_id: str, reset_steps: int = 14, **env_kwargs) -> None:
         """
         For supported env_kwargs checkout ControlEnv class in libero.
         We add the following env_kwargs on top:
@@ -236,7 +234,7 @@ class Libero(EvaluatorEnv):
         return task_suite.n_tasks
 
     @staticmethod
-    def _make_gym(env_id, seed, **env_kwargs):
+    def _make_gym(env_id, **env_kwargs):
         from libero.libero import benchmark, get_libero_path
         from libero.libero.envs import OffScreenRenderEnv
 
@@ -251,7 +249,6 @@ class Libero(EvaluatorEnv):
             bddl_file_name=task_bddl_file,
             **env_kwargs,
         )
-        env.seed(seed)
 
         return env, task.language, task.name, task_suite, task_id, task
 
@@ -270,6 +267,8 @@ class Libero(EvaluatorEnv):
         return self.translate_obs(obs), reward, success, done, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
+        if seed is not None:
+            self.env.seed(seed)
         obs = self.env.reset()
         init_states = self.task_suite.get_task_init_states(
             self.task_id
@@ -329,9 +328,9 @@ class AgentConfig:
     port: int = 8080
 
 
-def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[list[float], list[float], list[float]]:
+def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
-    obs, _ = env.reset(options={})
+    obs, _ = env.reset(options={}, seed=start_seed + ith_episode)  # ensure different seed for each episode
     logging.debug(f"Reset env")
     agent.reset(obs, env.language_instruction)
     logging.debug(f"Reset agent")
@@ -349,20 +348,22 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
         rewards.append(reward)
         im.append(obs.cameras)
 
-    Path(f"{os.environ['CAM_PATH']}").mkdir(exist_ok=True, parents=True)
-    for camera in im[0].keys():
-        imgs = []
-        for img in im:
-            # skip images that have timestamps closer together than 0.5s
-            imgs.append(Image.fromarray(img[camera]))
+    cam_path = os.environ.get("CAM_PATH", None)
+    if cam_path is not None:
+        Path(f"{os.environ['CAM_PATH']}").mkdir(exist_ok=True, parents=True)
+        for camera in im[0].keys():
+            imgs = []
+            for img in im:
+                # skip images that have timestamps closer together than 0.5s
+                imgs.append(Image.fromarray(img[camera]))
 
-        imgs[0].save(
-            f"{os.environ['CAM_PATH']}/{i}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
-            save_all=True,
-            append_images=imgs[1:],
-            duration=0.2 * 1000,
-            loop=0,
-        )
+            imgs[0].save(
+                f"{os.environ['CAM_PATH']}/{ith_episode}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
+                save_all=True,
+                append_images=imgs[1:],
+                duration=0.2 * 1000,
+                loop=0,
+            )
 
     env.reset(options={})
     logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
@@ -373,7 +374,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
 per_process_cache = {}
 
 
-def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> tuple[EvaluatorEnv, RemoteAgent]:
+def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[EvaluatorEnv, RemoteAgent]:
     logging.debug(f"retrieving env {cfg.env_id} and agent")
     key = (cfg.env_id, agent_config.host, agent_config.port)
     if key not in per_process_cache:
@@ -395,7 +396,7 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> t
 def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[float, float, float]:
     i, cfgs, episodes, agent_cfg = args
     cfg = cfgs[i // episodes]
-    env, agent = create_env_agent(agent_cfg, cfg, seed=i)
+    env, agent = create_env_agent(agent_cfg, cfg)
     # busy wait for server to finish initialization
     while not agent.is_initialized():
         logging.info("Waiting for agent to initialize...")
@@ -415,7 +416,7 @@ def multi_eval(
     #     single_results = p.map(run_episode, args)
 
     # without process
-    np.random.seed(cfgs[0].seed)
+    # np.random.seed(cfgs[0].seed)
     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
     single_results = [run_episode(arg) for arg in tqdm(args)]
 
