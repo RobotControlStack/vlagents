@@ -149,23 +149,63 @@ class LeRobotPolicy(Agent):
         policy_name: str = "pi05",
         default_checkpoint_path: str = "lerobot/pi05_base",
         device: str = "cuda:0",
+        n_action_steps: int | None = None,
+        temporal_ensemble_coeff: float | None = None,
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
 
         self.policy_name = policy_name
         self.device = device
+        self.n_action_steps = n_action_steps
+        self.temporal_ensemble_coeff = temporal_ensemble_coeff
         checkpoint_path = self.checkpoint_path or self.default_checkpoint_path
         if self.checkpoint_step is not None:
             checkpoint_path = checkpoint_path.format(checkpoint_step=self.checkpoint_step)
         self.path = checkpoint_path
 
     def initialize(self):
+        from collections import deque
+
         from lerobot.policies.factory import get_policy_class
         from lerobot.policies.factory import make_pre_post_processors
+        from torchvision.transforms import v2
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
+        if self.policy_name == "act":
+            from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 
+            if self.n_action_steps is not None:
+                self.policy.config.n_action_steps = self.n_action_steps
+            if self.temporal_ensemble_coeff is not None:
+                self.policy.config.temporal_ensemble_coeff = self.temporal_ensemble_coeff
+                self.policy.temporal_ensembler = ACTTemporalEnsembler(
+                    self.temporal_ensemble_coeff,
+                    self.policy.config.chunk_size,
+                )
+            elif hasattr(self.policy, "temporal_ensembler"):
+                delattr(self.policy, "temporal_ensembler")
+
+            if self.policy.config.temporal_ensemble_coeff is None:
+                self.policy._action_queue = deque([], maxlen=self.policy.config.n_action_steps)
+
+        self._expected_image_shapes = {
+            key.removeprefix("observation.images."): tuple(feature.shape)
+            for key, feature in self.policy.config.input_features.items()
+            if key.startswith("observation.images.")
+        }
+        self._camera_transforms = {
+            key: v2.Compose(
+                [
+                    v2.ToImage(),
+                    v2.Resize((height, width)),
+                    v2.ToDtype(torch.float32, scale=True),
+                    v2.ToPureTensor(),
+                ]
+            )
+            for key, (_, height, width) in self._expected_image_shapes.items()
+        }
+        # self.policy.config.device = self.device
         self.policy.to(self.device)
         self.policy.eval()
 
@@ -186,24 +226,17 @@ class LeRobotPolicy(Agent):
         super().act(obs)
 
         observation = {
-            "observation.state": np.expand_dims(np.asarray(obs.state, dtype=np.float32), axis=0),
+            "observation.state": torch.as_tensor(obs.state, dtype=torch.float32),
             "task": self.instruction,
         }
 
         for key, img_data in obs.cameras.items():
-            img = img_data.astype(np.float32) / 255.0
-            
-            if img.ndim == 3 and img.shape[-1] in [1, 3, 4]:
-                img = np.transpose(img, (2, 0, 1))
-                
-            img = np.expand_dims(img, axis=0)
-            observation[f"observation.images.{key}"] = img
+            expected_shape = self._expected_image_shapes.get(key)
+            assert expected_shape is not None
+            observation[f"observation.images.{key}"] = self._camera_transforms[key](img_data)
 
         observation = self.preprocessor(observation)
-
-        for k, v in observation.items():
-            if isinstance(v, torch.Tensor):
-                observation[k] = v.to(self.device, non_blocking=True)
+        # TODO here we need to see if the inputs actually correspond to what we trained the policy with
 
 
         with torch.inference_mode():
