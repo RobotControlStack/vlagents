@@ -177,7 +177,8 @@ class ManiSkill(EvaluatorEnv):
         return self.translate_obs(obs), reward, success, truncated, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
-        obs, info = self.env.reset(seed=seed, options=options)
+        # maniskill has a bug that does not allow None in options
+        obs, info = self.env.reset(seed=seed)
         return self.translate_obs(obs), info
 
     @property
@@ -330,7 +331,7 @@ class AgentConfig:
 
 def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
-    obs, _ = env.reset(options={}, seed=start_seed + ith_episode)  # ensure different seed for each episode
+    obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
     logging.debug(f"Reset env")
     agent.reset(obs, env.language_instruction)
     logging.debug(f"Reset agent")
@@ -365,7 +366,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
                 loop=0,
             )
 
-    env.reset(options={})
+    env.reset()
     logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
     # success, last reward and number of steps
     return done, rewards, step
@@ -401,7 +402,7 @@ def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[f
     while not agent.is_initialized():
         logging.info("Waiting for agent to initialize...")
         sleep(5)
-    return single_eval(env, agent, cfg.max_steps_per_episode, i)
+    return single_eval(env, agent, cfg.max_steps_per_episode, i, start_seed=cfg.seed)
 
 
 def multi_eval(
