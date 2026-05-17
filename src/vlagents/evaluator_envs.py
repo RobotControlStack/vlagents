@@ -110,10 +110,31 @@ class RCSDuoBench(EvaluatorEnv):
     @staticmethod
     def do_import():
         import rcs
+        from rcs_duobench.tasks import ball_maze
         from rcs_duobench.tasks import bin_sort
+        from rcs_duobench.tasks import block_balance
+        from rcs_duobench.tasks import carry_pot
+        from rcs_duobench.tasks import join_blocks
+        from rcs_duobench.tasks import hinge_chest
+        from rcs_duobench.tasks import pour_marbles
+        from rcs_duobench.tasks import spring_door
+        from rcs_duobench.tasks import transfer_cube
+        from rcs_duobench.tasks import transfer_gate
+        from rcs_duobench.tasks import transfer_reorient
 
 
+EvaluatorEnv.register("duobench/ball_maze", RCSDuoBench)
 EvaluatorEnv.register("duobench/bin_sort", RCSDuoBench)
+EvaluatorEnv.register("duobench/block_balance", RCSDuoBench)
+EvaluatorEnv.register("duobench/carry_pot", RCSDuoBench)
+EvaluatorEnv.register("duobench/join_blocks", RCSDuoBench)
+EvaluatorEnv.register("duobench/hinge_chest", RCSDuoBench)
+EvaluatorEnv.register("duobench/pour_marbles", RCSDuoBench)
+EvaluatorEnv.register("duobench/spring_door", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_cube", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_gate", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_reorient", RCSDuoBench)
+
 
 class ManiSkill(EvaluatorEnv):
     INSTRUCTIONS = {
