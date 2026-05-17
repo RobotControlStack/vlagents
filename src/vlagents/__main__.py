@@ -157,6 +157,7 @@ def _run_eval(
             job_type="eval",
             name=wandb_name,
             group=wandb_group,
+            config={"eval_cfgs": eval_cfgs, "agent_cfg": agent_cfg, "episodes": episodes, "n_processes": n_processes, "n_gpus": n_gpus, "steps": steps}
         )
         wandb_log_git_diff(output_path)
         wandb.run.log_code(".")
