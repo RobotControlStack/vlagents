@@ -149,7 +149,7 @@ class LeRobotPolicy(Agent):
         policy_name: str = "pi05",
         default_checkpoint_path: str = "lerobot/pi05_base",
         device: str = "cuda:0",
-        n_action_steps: int | None = None,
+        n_action_steps: int | None = 30,
         temporal_ensemble_coeff: float | None = None,
         **kwargs,
     ) -> None:
@@ -170,6 +170,7 @@ class LeRobotPolicy(Agent):
         from lerobot.policies.factory import get_policy_class
         from lerobot.policies.factory import make_pre_post_processors
         from torchvision.transforms import v2
+        import torch
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
         if self.policy_name == "act":
@@ -226,14 +227,14 @@ class LeRobotPolicy(Agent):
         super().act(obs)
 
         observation = {
-            "observation.state": torch.as_tensor(obs.state, dtype=torch.float32),
+            "observation.state": torch.as_tensor(np.array(obs.state, copy=True)).to(torch.float32),
             "task": self.instruction,
         }
 
         for key, img_data in obs.cameras.items():
             expected_shape = self._expected_image_shapes.get(key)
             assert expected_shape is not None
-            observation[f"observation.images.{key}"] = self._camera_transforms[key](img_data)
+            observation[f"observation.images.{key}"] = self._camera_transforms[key](np.array(img_data, copy=True))
 
         observation = self.preprocessor(observation)
         # TODO here we need to see if the inputs actually correspond to what we trained the policy with

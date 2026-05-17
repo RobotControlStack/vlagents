@@ -218,13 +218,12 @@ class Libero(EvaluatorEnv):
         self.reset_steps = reset_steps
         self.control_mode = self.env_kwargs.pop("control_mode", "relative")
         self.env, self._language_instruction, self.task_name, self.task_suite, self.task_id, self.task = self._make_gym(
-            env_id, seed, **self.env_kwargs
+            env_id, **self.env_kwargs
         )
         logging.info(
             f"Created Libero env, task suite: {env_id}, task id: {self.task_id}, task name {self.task_name}, instruction: {self._language_instruction}"
         )
         self.env_id = env_id
-        self.seed = seed
 
     @staticmethod
     def n_tasks(env_id: str) -> int:
@@ -362,7 +361,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
                 f"{os.environ['CAM_PATH']}/{ith_episode}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
                 save_all=True,
                 append_images=imgs[1:],
-                duration=0.2 * 1000,
+                duration=1000 / 30,
                 loop=0,
             )
 
@@ -380,7 +379,7 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[Evalua
     key = (cfg.env_id, agent_config.host, agent_config.port)
     if key not in per_process_cache:
         logging.info(f"env {cfg.env_id} not available, creating new env and agent")
-        env = EvaluatorEnv.make(cfg.env_id, seed=seed, **cfg.env_kwargs)
+        env = EvaluatorEnv.make(cfg.env_id, **cfg.env_kwargs)
         logging.info("done creating env")
         agent = RemoteAgent(
             agent_config.host,
