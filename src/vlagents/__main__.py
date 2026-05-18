@@ -142,7 +142,7 @@ def _run_eval(
     else:
         steps = json.loads(steps)
 
-    agent_cfgs = [agent_cfg] * len(steps)
+    agent_cfgs = [copy.deepcopy(agent_cfg) for _ in eval_cfgs]
     # TODO: make this a prober argument that is passed
     os.environ["RUN_PATH"] = output_path
 
@@ -229,15 +229,21 @@ def _run_eval(
             )
 
     # distribute gpus equally
-    gpus_ids = [i % n_gpus for i in range(len(steps))]
+    # gpus_ids = [i % n_gpus for i in range(len(steps))]
+    gpus_ids = [i % n_gpus for i in range(len(eval_cfgs))]
 
     # spawn n processes and run in parallel
 
-    for idx in range(len(steps)):
+    for idx in range(len(eval_cfgs)):
         agent_cfgs[idx].port += idx
+        print(idx, agent_cfgs[idx].port)
     with Pool(n_processes) as p:
-        args = [(step, agent_cfgs[idx], eval_cfgs, episodes, 1, gpus_ids[idx]) for idx, step in enumerate(steps)]
+        # args = [(step, agent_cfgs[idx], eval_cfgs, episodes, 1, gpus_ids[idx]) for idx, step in enumerate(steps)]
+        args = [(steps[0], agent_cfgs[idx], eval_cfgs[idx:idx+1], episodes, 1, gpus_ids[idx]) for idx, eval_cfg in enumerate(eval_cfgs)]
         results = p.map(_per_process, args)
+    # args = [(step, agent_cfgs[idx], eval_cfgs, episodes, n_processes, gpus_ids[idx]) for idx, step in enumerate(steps)]
+    # args = [(steps[0], agent_cfgs[idx], eval_cfgs[idx:idx+1], episodes, n_processes, gpus_ids[idx]) for idx, eval_cfg in enumerate(eval_cfgs)]
+    # results = [_per_process(arg) for arg in args]
     logging.info("Finished evaluation")
 
     for result in results:
