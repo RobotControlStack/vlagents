@@ -151,6 +151,7 @@ class LeRobotPolicy(Agent):
         device: str = "cuda:0",
         n_action_steps: int | None = 30,
         temporal_ensemble_coeff: float | None = None,
+        rename_map: dict[str, str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
@@ -164,6 +165,17 @@ class LeRobotPolicy(Agent):
             checkpoint_path = checkpoint_path.format(checkpoint_step=self.checkpoint_step)
         self.path = checkpoint_path
 
+        if rename_map is not None:
+            self.rename_map = rename_map
+        else:
+            self.rename_map = {}
+
+        # self.rename_map = {
+        #     "head": "image",
+        #     "left_wrist": "image2",
+        #     "right_wrist": "image3",
+        # }
+
     def initialize(self):
         from collections import deque
 
@@ -171,6 +183,7 @@ class LeRobotPolicy(Agent):
         from lerobot.policies.factory import make_pre_post_processors
         from torchvision.transforms import v2
         import torch
+        from vlagents import train_xvla
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
         if self.policy_name == "act":
@@ -212,7 +225,7 @@ class LeRobotPolicy(Agent):
 
         preprocessor_overrides = {
             "device_processor": {"device": self.device},
-            # "rename_observations_processor": {"rename_map": self.cfg.rename_map},
+            # "rename_observations_processor": {"rename_map": self.rename_map},
         }
 
         self.preprocessor, self.postprocessor = make_pre_post_processors(
@@ -232,12 +245,13 @@ class LeRobotPolicy(Agent):
         }
 
         for key, img_data in obs.cameras.items():
-            expected_shape = self._expected_image_shapes.get(key)
+            expected_shape = self._expected_image_shapes.get(self.rename_map.get(key, key))
             assert expected_shape is not None
-            observation[f"observation.images.{key}"] = self._camera_transforms[key](np.array(img_data, copy=True))
+            observation[f"observation.images.{self.rename_map.get(key, key)}"] = self._camera_transforms[self.rename_map.get(key, key)](np.array(img_data, copy=True))
 
         observation = self.preprocessor(observation)
         # TODO here we need to see if the inputs actually correspond to what we trained the policy with
+        # print(observation["observation.images.image"].shape)
 
 
         with torch.inference_mode():
@@ -245,7 +259,7 @@ class LeRobotPolicy(Agent):
         action = self.postprocessor(action)
 
         if isinstance(action, torch.Tensor):
-            action = action.detach().cpu().numpy()
+            action = action.detach().float().cpu().numpy()
 
         action = np.squeeze(action, axis=0)
         return Act(action=np.asarray(action, dtype=np.float32))
