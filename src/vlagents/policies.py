@@ -149,7 +149,7 @@ class LeRobotPolicy(Agent):
         policy_name: str = "pi05",
         default_checkpoint_path: str = "lerobot/pi05_base",
         device: str = "cuda:0",
-        n_action_steps: int | None = 30,
+        n_action_steps: int = 30,
         temporal_ensemble_coeff: float | None = None,
         rename_map: dict[str, str] | None = None,
         **kwargs,
@@ -186,11 +186,11 @@ class LeRobotPolicy(Agent):
         from vlagents import train_xvla
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
+        self.policy.config.n_action_steps = self.n_action_steps
+
         if self.policy_name == "act":
             from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
 
-            if self.n_action_steps is not None:
-                self.policy.config.n_action_steps = self.n_action_steps
             if self.temporal_ensemble_coeff is not None:
                 self.policy.config.temporal_ensemble_coeff = self.temporal_ensemble_coeff
                 self.policy.temporal_ensembler = ACTTemporalEnsembler(
