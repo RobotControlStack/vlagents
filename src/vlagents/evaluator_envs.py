@@ -349,6 +349,47 @@ class AgentConfig:
     port: int = 8080
 
 
+def _write_camera_mp4(frames: list[np.ndarray], output_path: Path, fps: int = 30) -> None:
+    if not frames:
+        return
+
+    height, width = frames[0].shape[:2]
+    process = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-an",
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert process.stdin is not None
+    for frame in frames:
+        process.stdin.write(np.ascontiguousarray(frame).astype(np.uint8).tobytes())
+    process.stdin.close()
+    process.wait()
+
+
 def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
@@ -370,20 +411,14 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
         im.append(obs.cameras)
 
     cam_path = os.environ.get("CAM_PATH", None)
-    if cam_path is not None:
-        Path(f"{os.environ['CAM_PATH']}").mkdir(exist_ok=True, parents=True)
+    if cam_path is not None and im:
+        output_dir = Path(os.environ["CAM_PATH"]) / env.env_id
+        output_dir.mkdir(exist_ok=True, parents=True)
+        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
         for camera in im[0].keys():
-            imgs = []
-            for img in im:
-                # skip images that have timestamps closer together than 0.5s
-                imgs.append(Image.fromarray(img[camera]))
-
-            imgs[0].save(
-                f"{os.environ['CAM_PATH']}/{ith_episode}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
-                save_all=True,
-                append_images=imgs[1:],
-                duration=1000 / 30,
-                loop=0,
+            _write_camera_mp4(
+                [img[camera] for img in im],
+                output_dir / f"{ith_episode}_{camera}_{timestamp}.mp4",
             )
 
     env.reset()
@@ -433,7 +468,7 @@ def multi_eval(
 
     # with process
     # with Pool(n_processes) as p:
-    #     args = [(i, cfgs, episodes, client_cfg) for i in range(len(cfgs) * episodes)]
+    #     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
     #     single_results = p.map(run_episode, args)
 
     # without process
