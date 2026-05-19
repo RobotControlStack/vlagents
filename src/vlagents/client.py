@@ -34,13 +34,54 @@ class RemoteAgent(Agent):
             jpeg_encoding (bool, optional): If True the image data is jpeg encoded for smaller transfer size.
                 Defaults to False.
         """
+        self.host = host
+        self.port = port
+        self.model = model
         self.on_same_machine = on_same_machine
         self.jpeg_encoding = jpeg_encoding
         self._shm: dict[str, shared_memory.SharedMemory] = {}
+        self.c = None
+        self._connect()
+
+    def _connect(self):
         self.c = rpyc.connect(
-            host, port, config={"allow_pickle": True, "allow_public_attrs": True, "sync_request_timeout": 300}
+            self.host,
+            self.port,
+            config={"allow_pickle": True, "allow_public_attrs": True, "sync_request_timeout": 300},
         )
-        assert model == self.c.root.name()
+        assert self.model == self.c.root.name()
+
+    def reconnect(
+        self,
+        host: str | None = None,
+        port: int | None = None,
+        model: str | None = None,
+        on_same_machine: bool | None = None,
+        jpeg_encoding: bool | None = None,
+    ):
+        if self.c is not None:
+            try:
+                self.c.close()
+            except Exception:
+                pass
+        if host is not None:
+            self.host = host
+        if port is not None:
+            self.port = port
+        if model is not None:
+            self.model = model
+        if on_same_machine is not None:
+            self.on_same_machine = on_same_machine
+        if jpeg_encoding is not None:
+            self.jpeg_encoding = jpeg_encoding
+        self._connect()
+
+    def ensure_connected(self):
+        try:
+            assert self.c is not None
+            self.c.ping()
+        except Exception:
+            self.reconnect()
 
     def _process(self, obs: Obs) -> Obs:
         if self.on_same_machine:
@@ -75,18 +116,32 @@ class RemoteAgent(Agent):
         obs = self._process(obs)
         obs = json_numpy.dumps(asdict(obs))
         # action, done, info
-        return dataclass_from_dict(Act, json_numpy.loads(self.c.root.act(obs)))
+        try:
+            assert self.c is not None
+            return dataclass_from_dict(Act, json_numpy.loads(self.c.root.act(obs)))
+        except Exception:
+            self.reconnect()
+            assert self.c is not None
+            return dataclass_from_dict(Act, json_numpy.loads(self.c.root.act(obs)))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
         obs = self._process(obs)
         obs_dict = asdict(obs)
         # info
-        return json_numpy.loads(self.c.root.reset(json_numpy.dumps((obs_dict, instruction, kwargs))))
+        try:
+            assert self.c is not None
+            return json_numpy.loads(self.c.root.reset(json_numpy.dumps((obs_dict, instruction, kwargs))))
+        except Exception:
+            self.reconnect()
+            assert self.c is not None
+            return json_numpy.loads(self.c.root.reset(json_numpy.dumps((obs_dict, instruction, kwargs))))
 
     def git_status(self) -> str:
+        assert self.c is not None
         return json_numpy.loads(self.c.root.git_status())
 
     def is_initialized(self) -> bool:
+        assert self.c is not None
         return self.c.root.is_initialized()
 
     def close(self):
@@ -94,7 +149,8 @@ class RemoteAgent(Agent):
             shm.close()
             shm.unlink()
         self._shm = {}
-        self.c.close()
+        if self.c is not None:
+            self.c.close()
 
 
 if __name__ == "__main__":
