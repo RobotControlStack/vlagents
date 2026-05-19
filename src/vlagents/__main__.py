@@ -69,6 +69,9 @@ def _per_process(
     os.environ["CUDA_VISIBLE_DEVICES"] = str(nth_gpu)
     os.environ["CAM_PATH"] = f"{os.environ['RUN_PATH']}/videos/{step}"
     agent_cfg = copy.deepcopy(_agent_cfg)
+    # Each worker masks itself to a single CUDA device, so `cuda:0` resolves
+    # to the GPU assigned via CUDA_VISIBLE_DEVICES.
+    agent_cfg.agent_kwargs.setdefault("device", "cuda:0")
     agent_cfg.agent_kwargs["checkpoint_step"] = step
 
     per_env_results_last_reward, per_env_results_rewards = evaluation(
@@ -79,6 +82,46 @@ def _per_process(
     mean_rewards = [np.mean(env_rewards) if env_rewards else 0.0 for env_rewards in flatten_rewards]
     logging.info("Returning results for step %s", step)
     return per_env_results_last_reward, per_env_results_rewards, mean_rewards, step
+
+
+def _eval_cfg_key(cfg: EvalConfig) -> str:
+    return json.dumps({"env_id": cfg.env_id, "env_kwargs": cfg.env_kwargs}, sort_keys=True)
+
+
+def _merge_env_split_results(
+    results: list[tuple[np.ndarray, list[list[list[float]]], list[float], int]],
+    worker_eval_cfgs: list[list[EvalConfig]],
+    eval_cfgs: list[EvalConfig],
+) -> tuple[np.ndarray, list[list[list[float]]], list[float], int]:
+    per_cfg_results: dict[str, tuple[np.ndarray, list[list[float]], float]] = {}
+    merged_step = results[0][3] if results else None
+
+    for result, cfgs in zip(results, worker_eval_cfgs, strict=True):
+        per_env_results_last_reward, per_env_results_rewards, mean_rewards, step = result
+        if merged_step is None:
+            merged_step = step
+
+        assert len(cfgs) == per_env_results_last_reward.shape[0] == len(per_env_results_rewards) == len(mean_rewards)
+        for idx, cfg in enumerate(cfgs):
+            per_cfg_results[_eval_cfg_key(cfg)] = (
+                per_env_results_last_reward[idx],
+                per_env_results_rewards[idx],
+                mean_rewards[idx],
+            )
+
+    ordered_last_reward = []
+    ordered_rewards = []
+    ordered_mean_rewards = []
+    for cfg in eval_cfgs:
+        key = _eval_cfg_key(cfg)
+        if key not in per_cfg_results:
+            raise KeyError(f"Missing worker result for evaluation config {cfg}")
+        last_reward, rewards, mean_reward = per_cfg_results[key]
+        ordered_last_reward.append(last_reward)
+        ordered_rewards.append(rewards)
+        ordered_mean_rewards.append(mean_reward)
+
+    return np.stack(ordered_last_reward, axis=0), ordered_rewards, ordered_mean_rewards, merged_step
 
 
 @main_app.command()
@@ -142,7 +185,6 @@ def _run_eval(
     else:
         steps = json.loads(steps)
 
-    agent_cfgs = [copy.deepcopy(agent_cfg) for _ in eval_cfgs]
     # TODO: make this a prober argument that is passed
     os.environ["RUN_PATH"] = output_path
 
@@ -228,25 +270,41 @@ def _run_eval(
                 summary="max",
             )
 
-    # distribute gpus equally
-    # gpus_ids = [i % n_gpus for i in range(len(steps))]
-    gpus_ids = [i % n_gpus for i in range(len(eval_cfgs))]
+    if len(steps) > 1:
+        # Evaluate different checkpoints in parallel and keep the full env set together.
+        worker_eval_cfgs = [eval_cfgs for _ in steps]
+        args = []
+        for idx, step in enumerate(steps):
+            worker_agent_cfg = copy.deepcopy(agent_cfg)
+            worker_agent_cfg.port += idx
+            args.append((step, worker_agent_cfg, eval_cfgs, episodes, 1, idx % n_gpus))
+        max_workers = len(args)
+    else:
+        # For a single checkpoint, fan out across environments so multiple GPUs
+        # can each host one policy server and evaluate a subset of tasks.
+        worker_eval_cfgs = [[cfg] for cfg in eval_cfgs]
+        args = []
+        for idx, cfg in enumerate(eval_cfgs):
+            worker_agent_cfg = copy.deepcopy(agent_cfg)
+            worker_agent_cfg.port += idx
+            args.append((steps[0], worker_agent_cfg, [cfg], episodes, 1, idx % n_gpus))
+        max_workers = len(args)
 
-    # spawn n processes and run in parallel
+    pool_size = min(max_workers, n_processes or max_workers)
+    if pool_size > 1:
+        with Pool(pool_size) as p:
+            results = p.map(_per_process, args)
+    else:
+        results = [_per_process(args[0])]
 
-    for idx in range(len(eval_cfgs)):
-        agent_cfgs[idx].port += idx
-        print(idx, agent_cfgs[idx].port)
-    with Pool(n_processes) as p:
-        # args = [(step, agent_cfgs[idx], eval_cfgs, episodes, 1, gpus_ids[idx]) for idx, step in enumerate(steps)]
-        args = [(steps[0], agent_cfgs[idx], eval_cfgs[idx:idx+1], episodes, 1, gpus_ids[idx]) for idx, eval_cfg in enumerate(eval_cfgs)]
-        results = p.map(_per_process, args)
-    # args = [(step, agent_cfgs[idx], eval_cfgs, episodes, n_processes, gpus_ids[idx]) for idx, step in enumerate(steps)]
-    # args = [(steps[0], agent_cfgs[idx], eval_cfgs[idx:idx+1], episodes, n_processes, gpus_ids[idx]) for idx, eval_cfg in enumerate(eval_cfgs)]
-    # results = [_per_process(arg) for arg in args]
     logging.info("Finished evaluation")
 
-    for result in results:
+    if len(steps) > 1:
+        merged_results = results
+    else:
+        merged_results = [_merge_env_split_results(results, worker_eval_cfgs, eval_cfgs)]
+
+    for result in merged_results:
         per_env_results_last_reward, per_env_results_rewards, mean_rewards, step = result
         if use_wandb:
             step = step if step is not None else 0
@@ -273,7 +331,7 @@ def _run_eval(
             per_env_results_last_reward,
             per_env_results_rewards,
             eval_cfgs,
-            agent_cfg=agent_cfgs[0],
+            agent_cfg=agent_cfg,
             out=output_path,
         )
         if use_wandb:
