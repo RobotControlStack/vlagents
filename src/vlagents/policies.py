@@ -183,7 +183,7 @@ class LeRobotPolicy(Agent):
         from lerobot.policies.factory import make_pre_post_processors
         from torchvision.transforms import v2
         import torch
-        from vlagents import train_xvla
+        # from vlagents import train_xvla
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
         self.policy.config.n_action_steps = self.n_action_steps
@@ -255,7 +255,8 @@ class LeRobotPolicy(Agent):
 
 
         with torch.inference_mode():
-            action = self.policy.select_action(observation)
+            # action = self.policy.select_action(observation)
+            action = self.policy.predict_action_chunk(observation)
         action = self.postprocessor(action)
 
         if isinstance(action, torch.Tensor):
