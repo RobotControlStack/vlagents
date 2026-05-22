@@ -74,6 +74,9 @@ class RCSDuoBench(EvaluatorEnv):
         cameras = {}
         for key in obs["frames"]:
             cameras[key] = obs["frames"][key]["rgb"]["data"]
+            cameras[key] = np.array(
+                Image.fromarray(cameras[key]).resize((224, 224), Image.Resampling.BILINEAR)
+            )
         state = []
         for key in self.robot_keys:
             state.append(obs[key]["joints"])
