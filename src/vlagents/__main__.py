@@ -295,7 +295,8 @@ def _run_eval(
         with Pool(pool_size) as p:
             results = p.map(_per_process, args)
     else:
-        results = [_per_process(args[0])]
+        arg = (args[0][0], args[0][1], args[0][2], args[0][3], n_processes, args[0][5])
+        results = [_per_process(arg)]
 
     logging.info("Finished evaluation")
 

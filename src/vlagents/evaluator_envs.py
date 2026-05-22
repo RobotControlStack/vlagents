@@ -1,4 +1,5 @@
 import copy
+from multiprocessing import Pool
 import datetime
 import json
 import logging
@@ -466,15 +467,19 @@ def multi_eval(
     # return is [envs, episodes, 3(success, reward, steps)], [envs, episodes, rewards for all steps in the episode]
     logging.info(f"Starting evaluation with {len(cfgs)} environments and {episodes} episodes each")
 
-    # with process
-    # with Pool(n_processes) as p:
-    #     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
-    #     single_results = p.map(run_episode, args)
+    if n_processes is not None and n_processes > 1:
+        print(f"we have {n_processes} processes, running with multiprocessing on seeds")
+        # with process
+        with Pool(n_processes) as p:
+            args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
+            single_results = p.map(run_episode, args)
 
-    # without process
-    # np.random.seed(cfgs[0].seed)
-    args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
-    single_results = [run_episode(arg) for arg in tqdm(args)]
+    else:
+        print("no multiprocessing per seed")
+        # without process
+        # np.random.seed(cfgs[0].seed)
+        args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
+        single_results = [run_episode(arg) for arg in tqdm(args)]
 
     single_results_last_reward = np.array([(i[0], i[1][-1], i[2]) for i in single_results])
 
