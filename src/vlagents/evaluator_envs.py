@@ -398,7 +398,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
     logging.debug(f"Starting evaluation")
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
     logging.debug(f"Reset env")
-    agent.reset(obs, env.language_instruction)
+    agent.reset(copy.deepcopy(obs), env.language_instruction)
     logging.debug(f"Reset agent")
     done = False
     truncated = False
