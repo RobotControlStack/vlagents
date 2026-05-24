@@ -609,6 +609,7 @@ def write_results(
     eval_cfgs: list[EvalConfig],
     agent_cfg: AgentConfig,
     out: str = "",
+    grouped_eval_cfgs: list[list[EvalConfig]] | None = None,
 ) -> str:
     # first read json, if not exists write empty list
     path = os.path.join(out, f"results_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
@@ -621,49 +622,51 @@ def write_results(
 
     flatten_rewards = [[item for sublist in env_rewards for item in sublist] for env_rewards in rewards]
     mean_rewards = [np.mean(env_rewards) for env_rewards in flatten_rewards]
+    grouped_eval_cfgs = grouped_eval_cfgs or [[cfg] for cfg in eval_cfgs]
 
-    for idx, cfg in enumerate(eval_cfgs):
+    for idx, (cfg, cfg_group) in enumerate(zip(eval_cfgs, grouped_eval_cfgs, strict=True)):
         success_mean, reward_mean, steps_mean = results[idx].mean(axis=0, keepdims=False)
         success_max, reward_max, steps_max = results[idx].max(axis=0, keepdims=False)
         success_min, reward_min, steps_min = results[idx].min(axis=0, keepdims=False)
         sucess_std, reward_std, steps_std = results[idx].std(axis=0, keepdims=False)
         success_median, reward_median, steps_median = np.median(results[idx], axis=0, keepdims=False)
-        prev_results.append(
-            {
-                "success": {
-                    "mean": success_mean,
-                    "max": success_max,
-                    "min": success_min,
-                    "std": sucess_std,
-                    "median": success_median,
-                    "values": results[idx, :, 0].tolist(),
-                },
-                "reward_last_step": {
-                    "mean": reward_mean,
-                    "max": reward_max,
-                    "min": reward_min,
-                    "std": reward_std,
-                    "median": reward_median,
-                    "values": results[idx, :, 1].tolist(),
-                },
-                "rewards": {
-                    "mean": mean_rewards[idx],
-                    "values": rewards[idx],
-                },
-                "steps": {
-                    "mean": steps_mean,
-                    "max": steps_max,
-                    "min": steps_min,
-                    "std": steps_std,
-                    "median": steps_median,
-                    "values": results[idx, :, 2].tolist(),
-                },
-                "episodes": len(results),
-                "timestamp": datetime.datetime.now().isoformat(),
-                "env_cfg": asdict(cfg),
-                "agent_cfg": asdict(agent_cfg),
-            }
-        )
+        result_entry = {
+            "success": {
+                "mean": success_mean,
+                "max": success_max,
+                "min": success_min,
+                "std": sucess_std,
+                "median": success_median,
+                "values": results[idx, :, 0].tolist(),
+            },
+            "reward_last_step": {
+                "mean": reward_mean,
+                "max": reward_max,
+                "min": reward_min,
+                "std": reward_std,
+                "median": reward_median,
+                "values": results[idx, :, 1].tolist(),
+            },
+            "rewards": {
+                "mean": mean_rewards[idx],
+                "values": rewards[idx],
+            },
+            "steps": {
+                "mean": steps_mean,
+                "max": steps_max,
+                "min": steps_min,
+                "std": steps_std,
+                "median": steps_median,
+                "values": results[idx, :, 2].tolist(),
+            },
+            "episodes": results.shape[1],
+            "timestamp": datetime.datetime.now().isoformat(),
+            "env_cfg": asdict(cfg),
+            "agent_cfg": asdict(agent_cfg),
+        }
+        if len(cfg_group) > 1:
+            result_entry["merged_env_cfgs"] = [asdict(group_cfg) for group_cfg in cfg_group]
+        prev_results.append(result_entry)
 
     with open(path, "w") as f:
         json.dump(prev_results, f, indent=2)
