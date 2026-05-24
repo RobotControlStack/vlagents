@@ -453,7 +453,7 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[Evalua
     return per_process_cache[key]
 
 
-def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[float, float, float]:
+def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[list[float], list[float], list[float]]:
     i, cfgs, episodes, agent_cfg = args
     cfg = cfgs[i // episodes]
     env, agent = create_env_agent(agent_cfg, cfg)
@@ -465,24 +465,15 @@ def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[f
 
 
 def multi_eval(
-    agent_cfg: AgentConfig, cfgs: list[EvalConfig], episodes: int = 100, n_processes: int = 1
+    agent_cfg: AgentConfig, cfgs: list[EvalConfig], episodes: int = 100
 ) -> tuple[np.ndarray, list[list[list[float]]]]:
     # return is [envs, episodes, 3(success, reward, steps)], [envs, episodes, rewards for all steps in the episode]
     logging.info(f"Starting evaluation with {len(cfgs)} environments and {episodes} episodes each")
 
-    if n_processes is not None and n_processes > 1:
-        print(f"we have {n_processes} processes, running with multiprocessing on seeds")
-        # with process
-        with Pool(n_processes) as p:
-            args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
-            single_results = p.map(run_episode, args)
 
-    else:
-        print("no multiprocessing per seed")
-        # without process
-        # np.random.seed(cfgs[0].seed)
-        args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
-        single_results = [run_episode(arg) for arg in tqdm(args)]
+    # np.random.seed(cfgs[0].seed)
+    args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
+    single_results = [run_episode(arg) for arg in tqdm(args)]
 
     single_results_last_reward = np.array([(i[0], i[1][-1], i[2]) for i in single_results])
 
@@ -547,7 +538,6 @@ def evaluation(
     agent_cfg: AgentConfig,
     eval_cfgs: list[EvalConfig],
     episodes: int = 100,
-    n_processes: int = 1,
 ):
     per_process_cache.clear()
     logging.info(f"Starting evaluation with {agent_cfg.agent_name} and {agent_cfg.agent_kwargs}")
@@ -555,7 +545,7 @@ def evaluation(
         with start_server(
             agent_cfg.agent_name, agent_cfg.agent_kwargs, agent_cfg.port, agent_cfg.host, agent_cfg.python_path
         ):
-            res = multi_eval(agent_cfg, eval_cfgs, episodes, n_processes)
+            res = multi_eval(agent_cfg, eval_cfgs, episodes)
     except Exception:
         # Ensures you SEE the client's stack trace and any logged errors.
         logging.exception("Client failed")

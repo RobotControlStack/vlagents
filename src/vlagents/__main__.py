@@ -75,7 +75,7 @@ def _per_process(
     agent_cfg.agent_kwargs["checkpoint_step"] = step
 
     per_env_results_last_reward, per_env_results_rewards = evaluation(
-        agent_cfg=agent_cfg, eval_cfgs=eval_cfgs, episodes=episodes, n_processes=n_processes
+        agent_cfg=agent_cfg, eval_cfgs=eval_cfgs, episodes=episodes
     )
     logging.info(f"Finished evaluation for step {step}")
     flatten_rewards = [[item for sublist in env_rewards for item in sublist] for env_rewards in per_env_results_rewards]
@@ -287,7 +287,7 @@ def _run_eval(
         for idx, cfg in enumerate(eval_cfgs):
             worker_agent_cfg = copy.deepcopy(agent_cfg)
             worker_agent_cfg.port += idx
-            args.append((steps[0], worker_agent_cfg, [cfg], episodes, 1, idx % n_gpus))
+            args.append((steps[0], worker_agent_cfg, [cfg], episodes, idx % n_gpus))
         max_workers = len(args)
 
     pool_size = min(max_workers, n_processes or max_workers)
@@ -295,8 +295,7 @@ def _run_eval(
         with Pool(pool_size) as p:
             results = p.map(_per_process, args)
     else:
-        arg = (args[0][0], args[0][1], args[0][2], args[0][3], n_processes, args[0][5])
-        results = [_per_process(arg)]
+        results = [_per_process(arg) for arg in args]
 
     logging.info("Finished evaluation")
 
