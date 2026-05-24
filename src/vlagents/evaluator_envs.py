@@ -86,6 +86,7 @@ class RCSDuoBench(EvaluatorEnv):
             cameras=cameras,
             gripper=None,
             state=np.concatenate(state),
+            info={"high_res_cameras": {key: obs["frames"][key]["rgb"]["data"] for key in obs["frames"]}},
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
@@ -397,6 +398,7 @@ def _write_camera_mp4(frames: list[np.ndarray], output_path: Path, fps: int = 30
 def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
+    cameras = obs.info.pop("high_res_cameras", obs.cameras)
     logging.debug(f"Reset env")
     agent.reset(copy.deepcopy(obs), env.language_instruction)
     logging.debug(f"Reset agent")
@@ -408,11 +410,12 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
     while not done and not truncated and max_steps > step:
         action = agent.act(obs)
         obs, reward, done, truncated, _ = env.step(action)
+        cameras = obs.info.pop("high_res_cameras", obs.cameras)
         reward = float(reward)
         done, truncated = bool(done), bool(truncated)
         step += 1
         rewards.append(reward)
-        im.append(obs.cameras)
+        im.append(cameras)
 
     cam_path = os.environ.get("CAM_PATH", None)
     if cam_path is not None and im:
@@ -545,6 +548,7 @@ def evaluation(
         with start_server(
             agent_cfg.agent_name, agent_cfg.agent_kwargs, agent_cfg.port, agent_cfg.host, agent_cfg.python_path
         ):
+            sleep(30)
             res = multi_eval(agent_cfg, eval_cfgs, episodes)
     except Exception:
         # Ensures you SEE the client's stack trace and any logged errors.
