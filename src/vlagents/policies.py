@@ -16,6 +16,9 @@ import numpy as np
 import simplejpeg
 from PIL import Image
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+VALP_ROOT = REPO_ROOT 
+
 
 @dataclass(kw_only=True)
 class SharedMemoryPayload:
@@ -157,146 +160,165 @@ class VjepaAC(Agent):
             self.cfg = yaml.safe_load(f)
 
     def initialize(self):
-        # torch import
+        import copy
         import torch
 
-        # VJEPA imports
-        from app.vjepa_droid.transforms import make_transforms
+        from app.vjepa_rig.transforms import make_transforms
+        from app.vjepa_rig.utils import init_video_model, load_checkpoint, load_pretrained
         from inference.utils.world_model_wrapper import WorldModel
 
-        self.device = self.cfg.get("device", "cuda")
+        cfgs_model = self.cfg.get("model", {})
+        cfgs_meta = self.cfg.get("meta", {})
+        cfgs_data = self.cfg.get("data", {})
+        cfgs_data_aug = self.cfg.get("data_aug", {})
+        cfgs_mpc_args = self.cfg.get("mpc_args", {})
+        cfgs_log_args = self.cfg.get("log", {})
+        cfgs_exp_args = self.cfg.get("exp", {})
 
-        # model config 
-        cfgs_model = self.cfg.get("model")
+        self.device = self.cfg.get("device", "cuda:0")
 
-        pretrained_encoder = cfgs_model.get("pretrained_encoder", None)
-        predictors = cfgs_model.get("predictors", None)
-
-        self.side_decoder_name = cfgs_model.get("side_decoder", None)
-        self.wrist_decoder_name = cfgs_model.get("wrist_decoder", None)
-
-        # data config
-        cfgs_data = self.cfg.get("data")
+        camera_views = cfgs_data.get("camera_views", ["left_mp4_path"])
         crop_size = cfgs_data.get("crop_size", 256)
-        patch_size = cfgs_data.get("patch_size", 16)
-        tubelet_size = cfgs_data.get("tubelet_size", 2)
+        patch_size = cfgs_data.get("patch_size")
+        tubelet_size = cfgs_data.get("tubelet_size")
 
-        # data augs
-        cfgs_data_aug = self.cfg.get("data_aug")
-        use_aa = cfgs_data_aug.get("auto_augment", False)
-        horizontal_flip = cfgs_data_aug.get("horizontal_flip", False)
-        motion_shift = cfgs_data_aug.get("motion_shift", False)
-        ar_range = cfgs_data_aug.get("random_resize_aspect_ratio", [3 / 4, 4 / 3])
-        rr_scale = cfgs_data_aug.get("random_resize_scale", [0.3, 1.0])
-        reprob = cfgs_data_aug.get("reprob", 0.0)
-
-        # cfgs_mpc_args config
-        cfgs_mpc_args = self.cfg.get("mpc_args")
-        self.rollout_horizon = cfgs_mpc_args.get("rollout_horizon", 2)
-        samples = cfgs_mpc_args.get("samples", 25)
-        topk = cfgs_mpc_args.get("topk", 10)
-        cem_steps = cfgs_mpc_args.get("cem_steps", 1)
-        momentum_mean = cfgs_mpc_args.get("momentum_mean", 0.15)
-        momentum_mean_gripper = cfgs_mpc_args.get("momentum_mean_gripper", 0.15)
-        momentum_std = cfgs_mpc_args.get("momentum_std", 0.75)
-        momentum_std_gripper = cfgs_mpc_args.get("momentum_std_gripper", 0.15)
-        maxnorm = cfgs_mpc_args.get("maxnorm", 0.075)
-        maxrotnorm = cfgs_mpc_args.get("maxrotnorm", 0.314) 
-        verbose = cfgs_mpc_args.get("verbose", True)
-
-        # log
-        cfgs_log_args = self.cfg.get("log")
-        log_recons = cfgs_log_args.get("log_recons", False)
-        log_objective_loss = cfgs_log_args.get("log_objective_loss", False)
-
-        # exp
-        cfgs_exp_args = self.cfg.get("exp")
-        objective = cfgs_exp_args.get("objective", "l1")
-        warm_starting = cfgs_exp_args.get("warm-starting", False)
-
-        # Initialize transform (random-resize-crop augmentations)
         transform = make_transforms(
-            random_horizontal_flip=horizontal_flip,
-            random_resize_aspect_ratio=ar_range,
-            random_resize_scale=rr_scale,
-            reprob=reprob,
-            auto_augment=use_aa,
-            motion_shift=motion_shift,
+            random_horizontal_flip=cfgs_data_aug.get("horizontal_flip", False),
+            random_resize_aspect_ratio=cfgs_data_aug.get("random_resize_aspect_ratio", [3 / 4, 4 / 3]),
+            random_resize_scale=cfgs_data_aug.get("random_resize_scale", [0.3, 1.0]),
+            reprob=cfgs_data_aug.get("reprob", 0.0),
+            auto_augment=cfgs_data_aug.get("auto_augment", False),
+            motion_shift=cfgs_data_aug.get("motion_shift", False),
             crop_size=crop_size,
         )
 
-        # load pretrained encoder model
-        encoder = torch.hub.load(
-            ".", # path to hubconf.py
-            pretrained_encoder, 
-            source="local", 
-            pretrained=True,
+        model_name = cfgs_model.get("model_name")
+        pred_depth = cfgs_model.get("pred_depth")
+        pred_num_heads = cfgs_model.get("pred_num_heads", None)
+        cross_attn_num_heads = cfgs_model.get("cross_attn_num_heads", None)
+        pred_embed_dim = cfgs_model.get("pred_embed_dim")
+        pred_is_frame_causal = cfgs_model.get("pred_is_frame_causal", True)
+        uniform_power = cfgs_model.get("uniform_power", False)
+        use_rope = cfgs_model.get("use_rope", False)
+        use_silu = cfgs_model.get("use_silu", False)
+        use_pred_silu = cfgs_model.get("use_pred_silu", False)
+        wide_silu = cfgs_model.get("wide_silu", True)
+        use_extrinsics = cfgs_model.get("use_extrinsics", False)
+        dual_view_training = bool(cfgs_model.get("dual_view_training", False))
+        use_dinov3_encoder = bool(cfgs_model.get("use_dinov3_encoder", False))
+        use_activation_checkpointing = cfgs_model.get("use_activation_checkpointing", False)
+        use_sdpa = bool(cfgs_meta.get("use_sdpa", False))
+
+        context_encoder_key = cfgs_meta.get("context_encoder_key", "encoder")
+        pretrain_checkpoint = str(REPO_ROOT / cfgs_meta.get("pretrain_checkpoint"))
+        predictor_checkpoint = cfgs_model.get("predictor_checkpoint")
+        pretrain_dinocheckpoint = str(REPO_ROOT / cfgs_meta.get("pretrain_dinocheckpoint"))
+        if isinstance(predictor_checkpoint, list):
+            predictor_checkpoint = [str(REPO_ROOT / ckpt) for ckpt in predictor_checkpoint]
+        else:
+            predictor_checkpoint = str(REPO_ROOT / predictor_checkpoint)
+
+        if dual_view_training:
+            inferred_mode = "dual"
+        elif len(camera_views) == 1:
+            inferred_mode = "wrist" if "wrist" in camera_views[0] else "side"
+        elif len(camera_views) == 2:
+            inferred_mode = "independent_dual"
+        else:
+            raise ValueError(f"Unsupported VALP camera_views configuration: {camera_views}")
+
+        encoder, predictor = init_video_model(
+            uniform_power=uniform_power,
+            device=self.device,
+            patch_size=patch_size,
+            max_num_frames=512,
+            tubelet_size=tubelet_size,
+            model_name=model_name,
+            crop_size=crop_size,
+            pred_depth=pred_depth,
+            pred_num_heads=pred_num_heads,
+            pred_embed_dim=pred_embed_dim,
+            action_embed_dim=7,
+            pred_is_frame_causal=pred_is_frame_causal,
+            use_extrinsics=use_extrinsics,
+            use_sdpa=use_sdpa,
+            use_silu=use_silu,
+            use_pred_silu=use_pred_silu,
+            wide_silu=wide_silu,
+            use_rope=use_rope,
+            use_activation_checkpointing=use_activation_checkpointing,
+            dual_view_predictor=dual_view_training,
+            cross_attn_num_heads=cross_attn_num_heads,
+            use_dinov3_encoder=use_dinov3_encoder,
         )
-        encoder.to(self.device).eval()
-        tokens_per_frame = int((crop_size // encoder.patch_size) ** 2)
 
-        # -- single predictors
+        encoder = load_pretrained(
+            r_path=pretrain_dinocheckpoint if use_dinov3_encoder else pretrain_checkpoint,
+            target_encoder=encoder,
+            context_encoder_key=context_encoder_key,
+            use_dinov3_encoder=use_dinov3_encoder,
+        )
+
         predictor_models = {}
-        for predictor in predictors:
-            pred_model = torch.hub.load(
-                ".", # path to hubconf.py
-                predictor, 
-                source="local",
-                encoder_embed_dim=encoder.embed_dim,
-                pretrained=True,
-            ) 
-            pred_model.to(self.device).eval()
-            predictor_models[predictor] = pred_model
+        if inferred_mode == "independent_dual":
+            side_predictor, _, _, _, _ = load_checkpoint(
+                r_path=predictor_checkpoint[0],
+                predictor=copy.deepcopy(predictor),
+                opt=None,
+                scaler=None,
+            )
+            wrist_predictor, _, _, _, _ = load_checkpoint(
+                r_path=predictor_checkpoint[1],
+                predictor=copy.deepcopy(predictor),
+                opt=None,
+                scaler=None,
+            )
+            side_predictor.to(self.device).eval()
+            wrist_predictor.to(self.device).eval()
+            predictor_models["side"] = side_predictor
+            predictor_models["wrist"] = wrist_predictor
+        else:
+            predictor, _, _, _, _ = load_checkpoint(
+                r_path=predictor_checkpoint,
+                predictor=predictor,
+                opt=None,
+                scaler=None,
+            )
+            predictor.to(self.device).eval()
+            predictor_models[inferred_mode] = predictor
 
-        # -- side decoder
-        side_decoder = None
-        if log_recons:
-            side_decoder = torch.hub.load(
-                ".", # path to hubconf.py
-                self.side_decoder_name, 
-                source="local", 
-                pretrained=True)
-            side_decoder.to(self.device).eval()
+        encoder.to(self.device).eval()
+        tokens_per_frame = int((crop_size // patch_size) ** 2)
 
-        # -- wrist decoder
-        wrist_decoder = None
-        if log_recons:
-            wrist_decoder = torch.hub.load(
-                ".", # path to hubconf.py
-                self.wrist_decoder_name, 
-                source="local", 
-                pretrained=True)
-            wrist_decoder.to(self.device).eval()
-
-
-        # World model wrapper initialization
         self.world_model = WorldModel(
             encoder=encoder,
             predictor=predictor_models,
+            inferred_mode=inferred_mode,
+            use_dinov3_encoder=use_dinov3_encoder,
             tokens_per_frame=tokens_per_frame,
             mpc_args={
-                "rollout": self.rollout_horizon,
-                "samples": samples,
-                "topk": topk,
-                "cem_steps": cem_steps,
-                "momentum_mean": momentum_mean,
-                "momentum_mean_gripper": momentum_mean_gripper,
-                "momentum_std": momentum_std,
-                "momentum_std_gripper": momentum_std_gripper,
-                "maxnorm": maxnorm,
-                "maxrotnorm": maxrotnorm,
-                "verbose": verbose,
-                "objective": objective,
-                "warm_starting": warm_starting
+                "rollout": cfgs_mpc_args.get("rollout_horizon", 2),
+                "samples": cfgs_mpc_args.get("samples", 25),
+                "topk": cfgs_mpc_args.get("topk", 10),
+                "cem_steps": cfgs_mpc_args.get("cem_steps", 1),
+                "momentum_mean": cfgs_mpc_args.get("momentum_mean", 0.15),
+                "momentum_mean_rot": cfgs_mpc_args.get("momentum_mean_rot", 0.25),
+                "momentum_mean_gripper": cfgs_mpc_args.get("momentum_mean_gripper", 0.15),
+                "momentum_std": cfgs_mpc_args.get("momentum_std", 0.75),
+                "momentum_std_rot": cfgs_mpc_args.get("momentum_std_rot", 0.85),
+                "momentum_std_gripper": cfgs_mpc_args.get("momentum_std_gripper", 0.15),
+                "maxnorm": cfgs_mpc_args.get("maxnorm", 0.075),
+                "maxrotnorm": cfgs_mpc_args.get("maxrotnorm", 0.314),
+                "verbose": cfgs_mpc_args.get("verbose", True),
+                "objective": cfgs_exp_args.get("objective", "l1"),
+                "warm_starting": cfgs_exp_args.get("warm-starting", False),
             },
             normalize_reps=True,
             device=self.device,
-            side_decoder = side_decoder,
-            wrist_decoder = wrist_decoder,
             transform=transform,
-            log_recons=log_recons,
-            log_objective_loss=log_objective_loss,
+            log_objective_loss=cfgs_log_args.get("log_objective_loss", False),
         )
+        self.logname = cfgs_log_args.get("modelname", "VALP_policy")
 
     def act(self, obs: Obs) -> Act:
         # torch imports
@@ -350,8 +372,6 @@ class VjepaAC(Agent):
         # imports
         import torch
         from torchvision.io import decode_jpeg
-
-        self.goal_rep = None
 
         goal_image = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
         goal_image = torch.frombuffer(bytearray(goal_image), dtype=torch.uint8)
