@@ -330,7 +330,7 @@ class VjepaAC(Agent):
             # [1, 7] -> [B, state_dim]
             # in DROID 0 is open to 1 is closed: float
             # In RCS 1 is open and 0 is close: binary
-            print("received state", obs.info["xyzrpy"], 1-obs.gripper[0])
+            # print("received state", obs.info["xyzrpy"], 1-obs.gripper[0])
             s_n = (
                 torch.tensor((np.concatenate(([obs.info["xyzrpy"], 
                                                [1-obs.gripper[0]]]), 
@@ -361,7 +361,10 @@ class VjepaAC(Agent):
             self.prev_action = mean[1:]
             
             first_action = actions[0].cpu()
-            print(f"vjepa side action: {first_action.numpy()}")
+            first_action[-1] = - first_action[-1]  # invert action as vjepa is trained on RCS and RCS has inverted action space compared to droid
+
+            # print(f"vjepa side action: {first_action.numpy()}")
+
         return Act(action=np.array(first_action))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
