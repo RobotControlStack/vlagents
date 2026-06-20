@@ -8,6 +8,7 @@ import subprocess
 from abc import ABC
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from multiprocessing import Pool
 from pathlib import Path
 from time import sleep
 from typing import Any
@@ -32,12 +33,10 @@ logging.basicConfig(
 class EvaluatorEnv(ABC):
     ENVS: dict[str, "EvaluatorEnv"] = {}
 
-    def __init__(self, env_id: str, seed: int, **env_kwargs) -> None:
+    def __init__(self, env_id: str, **env_kwargs) -> None:
         self.do_import()
         self.env = gym.make(env_id, **env_kwargs)
-        self.env.np_random = np.random.RandomState(seed=seed)
         self.env_id = env_id
-        self.seed = seed
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
         raise NotImplementedError
@@ -54,63 +53,100 @@ class EvaluatorEnv(ABC):
         EvaluatorEnv.ENVS[env_id] = env
 
     @staticmethod
-    def make(env_id: str, seed: int, **env_kwargs) -> "EvaluatorEnv":
-        return EvaluatorEnv.ENVS[env_id](env_id, seed, **env_kwargs)
+    def make(env_id: str, **env_kwargs) -> "EvaluatorEnv":
+        return EvaluatorEnv.ENVS[env_id](env_id, **env_kwargs)
 
     @staticmethod
     def do_import():
         raise NotImplementedError
 
 
-class RCSPickUpCubeEval(EvaluatorEnv):
-    INSTRUCTIONS = {
-        "rcs/FR3SimplePickUpSim-v0": "pick the green box",
-        "rcs/FR3LabPickUpSimDigitHand-v0": "pick the green box",
-    }
+class RCSDuoBench(EvaluatorEnv):
+    INSTRUCTIONS = {}
+
+    def __init__(self, env_id, **env_kwargs):
+        self.robot_keys: str = env_kwargs.pop("robot_keys", ["left", "right"])
+        self.control_mode: str = env_kwargs.pop("control_mode", "joints")
+        self._instruction: str | None = None
+        super().__init__(env_id, **env_kwargs)
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
-        # does not include history
+        cameras = {}
+        for key in obs["frames"]:
+            cameras[key] = obs["frames"][key]["rgb"]["data"]
+            cameras[key] = np.array(Image.fromarray(cameras[key]).resize((224, 224), Image.Resampling.BILINEAR))
+        state = []
+        for key in self.robot_keys:
+            state.append(obs[key]["joints"])
+            state.append(obs[key]["gripper"])
 
-        # side = obs["frames"]["arro"]["rgb"]["data"]
-        side = obs["frames"]["side"]["rgb"]["data"]
-        wrist = obs["frames"]["wrist"]["rgb"]["data"]
-        # depth_side = obs["frames"]["side"]["depth"]["data"],
         return Obs(
-            cameras=dict(rgb_side=side, rgb_wrist=wrist),
-            # cameras=dict(rgb_side=side),
-            gripper=obs["gripper"],
-            info=dict(joints=obs["joints"]),
+            cameras=cameras,
+            gripper=None,
+            state=np.concatenate(state),
+            info={"high_res_cameras": {key: obs["frames"][key]["rgb"]["data"] for key in obs["frames"]}},
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
-        # includes horizon
-        if action.action.shape[0] != 7:
-            obs, reward, success, truncated, info = self.env.step(
-                {"xyzrpy": action.action[0][:6], "gripper": action.action[0][6]}
-            )
-        else:
-            obs, reward, success, truncated, info = self.env.step(
-                {"xyzrpy": action.action[:6], "gripper": action.action[6]}
-            )
-        # print(action.action, obs["xyzrpy"], obs["gripper"])
-        return self.translate_obs(obs), reward, success, truncated, info
+        assert (
+            len(action.action.shape) == 1
+        ), "this function cannot deal with batches or action chunks, please return single actions"
+        env_action = {}
+        for idx, robot in enumerate(self.robot_keys):
+            if self.control_mode == "joints":
+                env_action[robot] = {
+                    "joints": action.action[idx * 8 : idx * 8 + 7],
+                    "gripper": action.action[idx * 8 + 7 : idx * 8 + 8],
+                }
+            else:
+                env_action[robot] = {
+                    "xyzrpy": action.action[idx * 7 : idx * 7 + 6],
+                    "gripper": action.action[idx * 7 + 6 : idx * 7 + 7],
+                }
+        obs, reward, success, truncated, info = self.env.step(env_action)
+        r = float(reward)
+
+        return self.translate_obs(obs), r, success, truncated, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
-        obs, info = self.env.reset()
+        obs, info = self.env.reset(seed=seed, options=options)
+        self._instruction = info["instruction"]
         return self.translate_obs(obs), info
 
     @property
     def language_instruction(self) -> str:
-        return self.INSTRUCTIONS[self.env_id]
+        assert self._instruction is not None
+        return self._instruction
 
     @staticmethod
     def do_import():
         import rcs
-        import rcs_toolbox
+        from rcs_duobench.tasks import (
+            ball_maze,
+            bin_sort,
+            block_balance,
+            carry_pot,
+            hinge_chest,
+            join_blocks,
+            pour_marbles,
+            spring_door,
+            transfer_cube,
+            transfer_gate,
+            transfer_reorient,
+        )
 
 
-EvaluatorEnv.register("rcs/FR3SimplePickUpSim-v0", RCSPickUpCubeEval)
-EvaluatorEnv.register("rcs/FR3LabPickUpSimDigitHand-v0", RCSPickUpCubeEval)
+EvaluatorEnv.register("duobench/ball_maze", RCSDuoBench)
+EvaluatorEnv.register("duobench/bin_sort", RCSDuoBench)
+EvaluatorEnv.register("duobench/block_balance", RCSDuoBench)
+EvaluatorEnv.register("duobench/carry_pot", RCSDuoBench)
+EvaluatorEnv.register("duobench/join_blocks", RCSDuoBench)
+EvaluatorEnv.register("duobench/hinge_chest", RCSDuoBench)
+EvaluatorEnv.register("duobench/pour_marbles", RCSDuoBench)
+EvaluatorEnv.register("duobench/spring_door", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_cube", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_gate", RCSDuoBench)
+EvaluatorEnv.register("duobench/transfer_reorient", RCSDuoBench)
 
 
 class ManiSkill(EvaluatorEnv):
@@ -128,12 +164,12 @@ class ManiSkill(EvaluatorEnv):
         "PokeCube-v1": "push the cube by using the blue tool",
     }
 
-    def __init__(self, env_id, seed, **env_kwargs):
+    def __init__(self, env_id, **env_kwargs):
         # TODO: one could save only every nth episode by adding an episode counter which steps the record env only
         # when the counter is divisible by n otherwise steps the normal env
         logging.info(f"Creating ManiSkill env {env_id}")
         output_dir = env_kwargs.pop("video_dir", None)
-        super().__init__(env_id, seed, **env_kwargs)
+        super().__init__(env_id, **env_kwargs)
         logging.info(f"Created ManiSkill env {env_id}")
         if "human_render_camera_configs" in env_kwargs:
             self.env = HumanCameraWrapper(self.env)
@@ -175,7 +211,8 @@ class ManiSkill(EvaluatorEnv):
         return self.translate_obs(obs), reward, success, truncated, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
-        obs, info = self.env.reset(seed=seed, options=options)
+        # maniskill has a bug that does not allow None in options
+        obs, info = self.env.reset(seed=seed)
         return self.translate_obs(obs), info
 
     @property
@@ -202,7 +239,7 @@ EvaluatorEnv.register("PokeCube-v1", ManiSkill)
 
 class Libero(EvaluatorEnv):
 
-    def __init__(self, env_id: str, seed: int, reset_steps: int = 14, **env_kwargs) -> None:
+    def __init__(self, env_id: str, reset_steps: int = 14, **env_kwargs) -> None:
         """
         For supported env_kwargs checkout ControlEnv class in libero.
         We add the following env_kwargs on top:
@@ -215,13 +252,12 @@ class Libero(EvaluatorEnv):
         self.reset_steps = reset_steps
         self.control_mode = self.env_kwargs.pop("control_mode", "relative")
         self.env, self._language_instruction, self.task_name, self.task_suite, self.task_id, self.task = self._make_gym(
-            env_id, seed, **self.env_kwargs
+            env_id, **self.env_kwargs
         )
         logging.info(
             f"Created Libero env, task suite: {env_id}, task id: {self.task_id}, task name {self.task_name}, instruction: {self._language_instruction}"
         )
         self.env_id = env_id
-        self.seed = seed
 
     @staticmethod
     def n_tasks(env_id: str) -> int:
@@ -232,7 +268,7 @@ class Libero(EvaluatorEnv):
         return task_suite.n_tasks
 
     @staticmethod
-    def _make_gym(env_id, seed, **env_kwargs):
+    def _make_gym(env_id, **env_kwargs):
         from libero.libero import benchmark, get_libero_path
         from libero.libero.envs import OffScreenRenderEnv
 
@@ -247,7 +283,6 @@ class Libero(EvaluatorEnv):
             bddl_file_name=task_bddl_file,
             **env_kwargs,
         )
-        env.seed(seed)
 
         return env, task.language, task.name, task_suite, task_id, task
 
@@ -266,6 +301,8 @@ class Libero(EvaluatorEnv):
         return self.translate_obs(obs), reward, success, done, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
+        if seed is not None:
+            self.env.seed(seed)
         obs = self.env.reset()
         init_states = self.task_suite.get_task_init_states(
             self.task_id
@@ -325,11 +362,55 @@ class AgentConfig:
     port: int = 8080
 
 
-def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[list[float], list[float], list[float]]:
+def _write_camera_mp4(frames: list[np.ndarray], output_path: Path, fps: int = 30) -> None:
+    if not frames:
+        return
+
+    height, width = frames[0].shape[:2]
+    process = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            str(fps),
+            "-i",
+            "-",
+            "-an",
+            "-vf",
+            "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    assert process.stdin is not None
+    for frame in frames:
+        process.stdin.write(np.ascontiguousarray(frame).astype(np.uint8).tobytes())
+    process.stdin.close()
+    process.wait()
+
+
+def single_eval(
+    env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int
+) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
-    obs, _ = env.reset(options={})
+    obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
+    cameras = obs.info.pop("high_res_cameras", obs.cameras)
     logging.debug(f"Reset env")
-    agent.reset(obs, env.language_instruction)
+    agent.reset(copy.deepcopy(obs), env.language_instruction)
     logging.debug(f"Reset agent")
     done = False
     truncated = False
@@ -339,28 +420,25 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
     while not done and not truncated and max_steps > step:
         action = agent.act(obs)
         obs, reward, done, truncated, _ = env.step(action)
+        cameras = obs.info.pop("high_res_cameras", obs.cameras)
         reward = float(reward)
         done, truncated = bool(done), bool(truncated)
         step += 1
         rewards.append(reward)
-        im.append(obs.cameras)
+        im.append(cameras)
 
-    Path(f"{os.environ['CAM_PATH']}").mkdir(exist_ok=True, parents=True)
-    for camera in im[0].keys():
-        imgs = []
-        for img in im:
-            # skip images that have timestamps closer together than 0.5s
-            imgs.append(Image.fromarray(img[camera]))
+    cam_path = os.environ.get("CAM_PATH", None)
+    if cam_path is not None and im:
+        output_dir = Path(os.environ["CAM_PATH"]) / env.env_id
+        output_dir.mkdir(exist_ok=True, parents=True)
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        for camera in im[0].keys():
+            _write_camera_mp4(
+                [img[camera] for img in im],
+                output_dir / f"{ith_episode}_{camera}_{timestamp}.mp4",
+            )
 
-        imgs[0].save(
-            f"{os.environ['CAM_PATH']}/{i}_{camera}_{str(datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))}.gif",
-            save_all=True,
-            append_images=imgs[1:],
-            duration=0.2 * 1000,
-            loop=0,
-        )
-
-    env.reset(options={})
+    env.reset()
     logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
     # success, last reward and number of steps
     return done, rewards, step
@@ -369,12 +447,12 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, i) -> tuple[lis
 per_process_cache = {}
 
 
-def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> tuple[EvaluatorEnv, RemoteAgent]:
+def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[EvaluatorEnv, RemoteAgent]:
     logging.debug(f"retrieving env {cfg.env_id} and agent")
     key = (cfg.env_id, agent_config.host, agent_config.port)
     if key not in per_process_cache:
         logging.info(f"env {cfg.env_id} not available, creating new env and agent")
-        env = EvaluatorEnv.make(cfg.env_id, seed=seed, **cfg.env_kwargs)
+        env = EvaluatorEnv.make(cfg.env_id, **cfg.env_kwargs)
         logging.info("done creating env")
         agent = RemoteAgent(
             agent_config.host,
@@ -388,30 +466,24 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig, seed: int) -> t
     return per_process_cache[key]
 
 
-def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[float, float, float]:
+def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[list[float], list[float], list[float]]:
     i, cfgs, episodes, agent_cfg = args
     cfg = cfgs[i // episodes]
-    env, agent = create_env_agent(agent_cfg, cfg, seed=i)
+    env, agent = create_env_agent(agent_cfg, cfg)
     # busy wait for server to finish initialization
     while not agent.is_initialized():
         logging.info("Waiting for agent to initialize...")
         sleep(5)
-    return single_eval(env, agent, cfg.max_steps_per_episode, i)
+    return single_eval(env, agent, cfg.max_steps_per_episode, i, start_seed=cfg.seed)
 
 
 def multi_eval(
-    agent_cfg: AgentConfig, cfgs: list[EvalConfig], episodes: int = 100, n_processes: int = 1
+    agent_cfg: AgentConfig, cfgs: list[EvalConfig], episodes: int = 100
 ) -> tuple[np.ndarray, list[list[list[float]]]]:
     # return is [envs, episodes, 3(success, reward, steps)], [envs, episodes, rewards for all steps in the episode]
     logging.info(f"Starting evaluation with {len(cfgs)} environments and {episodes} episodes each")
 
-    # with process
-    # with Pool(n_processes) as p:
-    #     args = [(i, cfgs, episodes, client_cfg) for i in range(len(cfgs) * episodes)]
-    #     single_results = p.map(run_episode, args)
-
-    # without process
-    np.random.seed(cfgs[0].seed)
+    # np.random.seed(cfgs[0].seed)
     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
     single_results = [run_episode(arg) for arg in tqdm(args)]
 
@@ -478,7 +550,6 @@ def evaluation(
     agent_cfg: AgentConfig,
     eval_cfgs: list[EvalConfig],
     episodes: int = 100,
-    n_processes: int = 1,
 ):
     per_process_cache.clear()
     logging.info(f"Starting evaluation with {agent_cfg.agent_name} and {agent_cfg.agent_kwargs}")
@@ -486,7 +557,8 @@ def evaluation(
         with start_server(
             agent_cfg.agent_name, agent_cfg.agent_kwargs, agent_cfg.port, agent_cfg.host, agent_cfg.python_path
         ):
-            res = multi_eval(agent_cfg, eval_cfgs, episodes, n_processes)
+            sleep(30)
+            res = multi_eval(agent_cfg, eval_cfgs, episodes)
     except Exception:
         # Ensures you SEE the client's stack trace and any logged errors.
         logging.exception("Client failed")
@@ -523,7 +595,7 @@ def run_eval(
             [
                 "-m",
                 "vlagents",
-                "run-eval-post-training",
+                "run-eval",
                 f"--agent-cfg={json.dumps(asdict(agent_cfg))}",
                 f"--episodes={episodes}",
                 f"--n-processes={n_processes}",
@@ -550,6 +622,7 @@ def write_results(
     eval_cfgs: list[EvalConfig],
     agent_cfg: AgentConfig,
     out: str = "",
+    grouped_eval_cfgs: list[list[EvalConfig]] | None = None,
 ) -> str:
     # first read json, if not exists write empty list
     path = os.path.join(out, f"results_{datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.json")
@@ -562,49 +635,51 @@ def write_results(
 
     flatten_rewards = [[item for sublist in env_rewards for item in sublist] for env_rewards in rewards]
     mean_rewards = [np.mean(env_rewards) for env_rewards in flatten_rewards]
+    grouped_eval_cfgs = grouped_eval_cfgs or [[cfg] for cfg in eval_cfgs]
 
-    for idx, cfg in enumerate(eval_cfgs):
+    for idx, (cfg, cfg_group) in enumerate(zip(eval_cfgs, grouped_eval_cfgs, strict=True)):
         success_mean, reward_mean, steps_mean = results[idx].mean(axis=0, keepdims=False)
         success_max, reward_max, steps_max = results[idx].max(axis=0, keepdims=False)
         success_min, reward_min, steps_min = results[idx].min(axis=0, keepdims=False)
         sucess_std, reward_std, steps_std = results[idx].std(axis=0, keepdims=False)
         success_median, reward_median, steps_median = np.median(results[idx], axis=0, keepdims=False)
-        prev_results.append(
-            {
-                "success": {
-                    "mean": success_mean,
-                    "max": success_max,
-                    "min": success_min,
-                    "std": sucess_std,
-                    "median": success_median,
-                    "values": results[idx, :, 0].tolist(),
-                },
-                "reward_last_step": {
-                    "mean": reward_mean,
-                    "max": reward_max,
-                    "min": reward_min,
-                    "std": reward_std,
-                    "median": reward_median,
-                    "values": results[idx, :, 1].tolist(),
-                },
-                "rewards": {
-                    "mean": mean_rewards[idx],
-                    "values": rewards[idx],
-                },
-                "steps": {
-                    "mean": steps_mean,
-                    "max": steps_max,
-                    "min": steps_min,
-                    "std": steps_std,
-                    "median": steps_median,
-                    "values": results[idx, :, 2].tolist(),
-                },
-                "episodes": len(results),
-                "timestamp": datetime.datetime.now().isoformat(),
-                "env_cfg": asdict(cfg),
-                "agent_cfg": asdict(agent_cfg),
-            }
-        )
+        result_entry = {
+            "success": {
+                "mean": success_mean,
+                "max": success_max,
+                "min": success_min,
+                "std": sucess_std,
+                "median": success_median,
+                "values": results[idx, :, 0].tolist(),
+            },
+            "reward_last_step": {
+                "mean": reward_mean,
+                "max": reward_max,
+                "min": reward_min,
+                "std": reward_std,
+                "median": reward_median,
+                "values": results[idx, :, 1].tolist(),
+            },
+            "rewards": {
+                "mean": mean_rewards[idx],
+                "values": rewards[idx],
+            },
+            "steps": {
+                "mean": steps_mean,
+                "max": steps_max,
+                "min": steps_min,
+                "std": steps_std,
+                "median": steps_median,
+                "values": results[idx, :, 2].tolist(),
+            },
+            "episodes": results.shape[1],
+            "timestamp": datetime.datetime.now().isoformat(),
+            "env_cfg": asdict(cfg),
+            "agent_cfg": asdict(agent_cfg),
+        }
+        if len(cfg_group) > 1:
+            result_entry["merged_env_cfgs"] = [asdict(group_cfg) for group_cfg in cfg_group]
+        prev_results.append(result_entry)
 
     with open(path, "w") as f:
         json.dump(prev_results, f, indent=2)

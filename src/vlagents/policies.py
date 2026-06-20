@@ -34,6 +34,9 @@ class Obs:
     cameras: dict[str, np.ndarray | SharedMemoryPayload | str] = field(default_factory=dict)
     camera_data_type: str = CameraDataType.RAW
     gripper: float | None = None
+    # TODO: add context about what the state means, and its dimensions
+    # theoratically it would be joints, xyzrpy and absolute or relative
+    state: np.ndarray | None = None
     info: dict[str, Any] = field(default_factory=dict)
 
 
@@ -139,6 +142,134 @@ class TestAgent(Agent):
         return info
 
 
+class LeRobotPolicy(Agent):
+
+    def __init__(
+        self,
+        policy_name: str = "pi05",
+        default_checkpoint_path: str = "lerobot/pi05_base",
+        device: str = "cuda:0",
+        n_action_steps: int = 30,
+        temporal_ensemble_coeff: float | None = None,
+        rename_map: dict[str, str] | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(default_checkpoint_path=default_checkpoint_path, **kwargs)
+
+        self.policy_name = policy_name
+        self.device = device
+        self.n_action_steps = n_action_steps
+        self.temporal_ensemble_coeff = temporal_ensemble_coeff
+        checkpoint_path = self.checkpoint_path or self.default_checkpoint_path
+        if self.checkpoint_step is not None:
+            checkpoint_path = checkpoint_path.format(checkpoint_step=self.checkpoint_step)
+        self.path = checkpoint_path
+
+        if rename_map is not None:
+            self.rename_map = rename_map
+        else:
+            self.rename_map = {}
+
+        # self.rename_map = {
+        #     "head": "image",
+        #     "left_wrist": "image2",
+        #     "right_wrist": "image3",
+        # }
+
+    def initialize(self):
+        from collections import deque
+
+        import torch
+        from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+        from torchvision.transforms import v2
+
+        # from vlagents import train_xvla
+
+        self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
+        self.policy.config.n_action_steps = self.n_action_steps
+
+        if self.policy_name == "act":
+            from lerobot.policies.act.modeling_act import ACTTemporalEnsembler
+
+            if self.temporal_ensemble_coeff is not None:
+                self.policy.config.temporal_ensemble_coeff = self.temporal_ensemble_coeff
+                self.policy.temporal_ensembler = ACTTemporalEnsembler(
+                    self.temporal_ensemble_coeff,
+                    self.policy.config.chunk_size,
+                )
+            elif hasattr(self.policy, "temporal_ensembler"):
+                delattr(self.policy, "temporal_ensembler")
+
+            if self.policy.config.temporal_ensemble_coeff is None:
+                self.policy._action_queue = deque([], maxlen=self.policy.config.n_action_steps)
+
+        self._expected_image_shapes = {
+            key.removeprefix("observation.images."): tuple(feature.shape)
+            for key, feature in self.policy.config.input_features.items()
+            if key.startswith("observation.images.")
+        }
+        self._camera_transforms = {
+            key: v2.Compose(
+                [
+                    v2.ToImage(),
+                    v2.Resize((height, width)),
+                    v2.ToDtype(torch.float32, scale=True),
+                    v2.ToPureTensor(),
+                ]
+            )
+            for key, (_, height, width) in self._expected_image_shapes.items()
+        }
+        # self.policy.config.device = self.device
+        self.policy.to(self.device)
+        self.policy.eval()
+
+        preprocessor_overrides = {
+            "device_processor": {"device": self.device},
+            # "rename_observations_processor": {"rename_map": self.rename_map},
+        }
+
+        self.preprocessor, self.postprocessor = make_pre_post_processors(
+            policy_cfg=self.policy.config,
+            pretrained_path=self.path,
+            preprocessor_overrides=preprocessor_overrides,
+        )
+
+    def act(self, obs: Obs) -> Act:
+        import torch
+
+        super().act(obs)
+
+        observation = {
+            "observation.state": torch.as_tensor(np.array(obs.state, copy=True)).to(torch.float32),
+            "task": self.instruction,
+        }
+
+        for key, img_data in obs.cameras.items():
+            expected_shape = self._expected_image_shapes.get(self.rename_map.get(key, key))
+            assert expected_shape is not None
+            observation[f"observation.images.{self.rename_map.get(key, key)}"] = self._camera_transforms[
+                self.rename_map.get(key, key)
+            ](np.array(img_data, copy=True))
+
+        observation = self.preprocessor(observation)
+
+        with torch.inference_mode():
+            action = self.policy.select_action(observation)
+            # action = self.policy.predict_action_chunk(observation)
+        action = self.postprocessor(action)
+
+        if isinstance(action, torch.Tensor):
+            action = action.detach().float().cpu().numpy()
+
+        action = np.squeeze(action, axis=0)
+        return Act(action=np.asarray(action, dtype=np.float32))
+
+    def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
+        info = super().reset(obs, instruction, **kwargs)
+        self.policy.reset()
+        return info
+
+
 class VjepaAC(Agent):
 
     def __init__(
@@ -241,12 +372,12 @@ class VjepaAC(Agent):
         import torch
         from torchvision.io import decode_jpeg
 
+        super().act(obs)
+
         with torch.no_grad():
 
             # read from camera-stream
-            side = base64.urlsafe_b64decode(obs.cameras["rgb_side"])
-            side = torch.frombuffer(bytearray(side), dtype=torch.uint8)
-            side = decode_jpeg(side)
+            side = obs.cameras["rgb_side"]
 
             # [3, 720, 1280]  -> [1, 720, 1280, 3] i.e, [T, C, Patches, dim]
             side = torch.permute(side, (1, 2, 0)).unsqueeze(0)
@@ -686,6 +817,7 @@ class OpenVLADistribution(OpenVLAModel):
 AGENTS = dict(
     test=TestAgent,
     octo=OctoModel,
+    lerobot=LeRobotPolicy,
     openvla=OpenVLAModel,
     octodist=OctoActionDistribution,
     openvladist=OpenVLADistribution,
