@@ -31,6 +31,7 @@ On top of vlagents you can then install a simulation environment where the agent
 We currently the following environments:
 - [maniskill](https://github.com/haosulab/ManiSkill)
 - [robot control stack](https://github.com/RobotControlStack/robot-control-stack)
+- [duobench](https://github.com/RobotControlStack/duobench)
 - [libero](https://github.com/Lifelong-Robot-Learning/LIBERO)
 
 
@@ -41,6 +42,14 @@ We currently support the following policies:
 - [openpi](https://github.com/Physical-Intelligence/openpi)
 - [vjepa2-ac](https://github.com/facebookresearch/vjepa2)
 - [diffusion policy](https://github.com/real-stanford/diffusion_policy)
+- [lerobot policies](https://github.com/huggingface/lerobot/tree/main/src/lerobot/policies)
+
+
+### LeRobot
+```shell
+pip install 'lerobot[all]'
+```
+
 
 
 ### Octo
@@ -74,7 +83,7 @@ pip install git+https://github.com/juelg/vlagents.git
 For more details, see the [Octo github page](https://github.com/octo-models/octo).
 
 #### Troubleshooting
-If pip conplains about dependency issues than it might have happened that torch somehow slipped in.
+If pip complains about dependency issues than it might have happened that torch somehow slipped in.
 Check if you have any torch packages installed by
 ```shell
 pip freeze | grep torch
@@ -152,6 +161,16 @@ Currently located on the branch `diffusion_policy`.
 ## Usage
 To start an vlagents server use the `start-server` command where `kwargs` is a dictionary of the constructor arguments of the policy you want to start e.g.
 ```shell
+# lerobot act (n_action_steps is the executed horizon of the action chunk)
+python -m vlagents start-server lerobot --port 8080 --host 0.0.0.0 --kwargs '{"policy_name": "act", "checkpoint_path": "<path to pretrained_model>", "n_action_steps": 1}'
+
+# lerobot pi05
+python -m vlagents start-server lerobot --port 20000 --host 0.0.0.0 --kwargs '{"policy_name": "pi05", "checkpoint_path": "<path to pretrained_model>", "n_action_steps": 1}'
+
+# lerobot xvla
+uv run python -m vlagents start-server lerobot --port 20000 --host 0.0.0.0 --kwargs '{"policy_name": "xvla", "checkpoint_path": "<path to pretrained_model>", "n_action_steps": 1, "rename_map": {"head": "image", "left_wrist": "image2", "right_wrist": "image3"}}'
+
+
 # octo
 python -m vlagents start-server octo --host localhost --port 8080 --kwargs '{"checkpoint_path": "hf://Juelg/octo-base-1.5-finetuned-maniskill", "checkpoint_step": None, "horizon": 1, "unnorm_key": []}'
 
@@ -262,12 +281,18 @@ make test
 ```
 
 ## Citation
-If you find the agent useful for your work, please consider citing the original work behind it:
+If you find the agent useful for your work, please consider citing the original works behind it:
 ```
 @inproceedings{juelg2025refinedpolicydistillationvla,
     title={{Refined Policy Distillation}: {F}rom {VLA} Generalists to {RL} Experts}, 
     author={Tobias J{\"u}lg and Wolfram Burgard and Florian Walter},
     year={2025},
-    booktitle={Proc.~of the IEEE/RSJ Int.~Conf.~on Intelligent Robots and Systems (IROS)},
+    booktitle={Proc.~of the IEEE/RSJ Int.~Conf.~on Intelligent Robots and Systems (IROS)}
+}
+@misc{juelg2026vlagentspolicyserverefficient,
+      title={VLAgents: A Policy Server for Efficient VLA Inference}, 
+      author={Tobias J{\"u}lg and Khaled Gamal and Nisarga Nilavadi and Pierre Krack and Seongjin Bien and Michael Krawez and Florian Walter and Wolfram Burgard},
+      year={2026},
+      howpublished={\url{https://arxiv.org/abs/2601.11250}}
 }
 ```

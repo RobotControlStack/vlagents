@@ -252,12 +252,10 @@ class LeRobotPolicy(Agent):
             ](np.array(img_data, copy=True))
 
         observation = self.preprocessor(observation)
-        # TODO here we need to see if the inputs actually correspond to what we trained the policy with
-        # print(observation["observation.images.image"].shape)
 
         with torch.inference_mode():
-            # action = self.policy.select_action(observation)
-            action = self.policy.predict_action_chunk(observation)
+            action = self.policy.select_action(observation)
+            # action = self.policy.predict_action_chunk(observation)
         action = self.postprocessor(action)
 
         if isinstance(action, torch.Tensor):
