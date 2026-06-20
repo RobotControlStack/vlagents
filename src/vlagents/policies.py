@@ -179,10 +179,10 @@ class LeRobotPolicy(Agent):
     def initialize(self):
         from collections import deque
 
-        from lerobot.policies.factory import get_policy_class
-        from lerobot.policies.factory import make_pre_post_processors
-        from torchvision.transforms import v2
         import torch
+        from lerobot.policies.factory import get_policy_class, make_pre_post_processors
+        from torchvision.transforms import v2
+
         # from vlagents import train_xvla
 
         self.policy = get_policy_class(self.policy_name).from_pretrained(self.path)
@@ -247,12 +247,13 @@ class LeRobotPolicy(Agent):
         for key, img_data in obs.cameras.items():
             expected_shape = self._expected_image_shapes.get(self.rename_map.get(key, key))
             assert expected_shape is not None
-            observation[f"observation.images.{self.rename_map.get(key, key)}"] = self._camera_transforms[self.rename_map.get(key, key)](np.array(img_data, copy=True))
+            observation[f"observation.images.{self.rename_map.get(key, key)}"] = self._camera_transforms[
+                self.rename_map.get(key, key)
+            ](np.array(img_data, copy=True))
 
         observation = self.preprocessor(observation)
         # TODO here we need to see if the inputs actually correspond to what we trained the policy with
         # print(observation["observation.images.image"].shape)
-
 
         with torch.inference_mode():
             # action = self.policy.select_action(observation)

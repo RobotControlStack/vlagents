@@ -136,7 +136,9 @@ def _aggregate_results_for_reporting(
     representative_cfgs = []
 
     for cfg_group in grouped_cfgs:
-        indices = [idx for idx, cfg in enumerate(eval_cfgs) if _report_eval_cfg_key(cfg) == _report_eval_cfg_key(cfg_group[0])]
+        indices = [
+            idx for idx, cfg in enumerate(eval_cfgs) if _report_eval_cfg_key(cfg) == _report_eval_cfg_key(cfg_group[0])
+        ]
         merged_last_reward = np.concatenate([per_env_results_last_reward[idx] for idx in indices], axis=0)
         merged_rewards = [episode_rewards for idx in indices for episode_rewards in per_env_results_rewards[idx]]
         flatten_rewards = [reward for episode_rewards in merged_rewards for reward in episode_rewards]
@@ -269,7 +271,14 @@ def _run_eval(
             job_type="eval",
             name=wandb_name,
             group=wandb_group,
-            config={"eval_cfgs": eval_cfgs, "agent_cfg": agent_cfg, "episodes": episodes, "n_processes": n_processes, "n_gpus": n_gpus, "steps": steps}
+            config={
+                "eval_cfgs": eval_cfgs,
+                "agent_cfg": agent_cfg,
+                "episodes": episodes,
+                "n_processes": n_processes,
+                "n_gpus": n_gpus,
+                "steps": steps,
+            },
         )
         wandb_log_git_diff(output_path)
         wandb.run.log_code(".")

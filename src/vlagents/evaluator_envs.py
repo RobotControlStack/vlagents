@@ -1,5 +1,4 @@
 import copy
-from multiprocessing import Pool
 import datetime
 import json
 import logging
@@ -9,6 +8,7 @@ import subprocess
 from abc import ABC
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+from multiprocessing import Pool
 from pathlib import Path
 from time import sleep
 from typing import Any
@@ -74,9 +74,7 @@ class RCSDuoBench(EvaluatorEnv):
         cameras = {}
         for key in obs["frames"]:
             cameras[key] = obs["frames"][key]["rgb"]["data"]
-            cameras[key] = np.array(
-                Image.fromarray(cameras[key]).resize((224, 224), Image.Resampling.BILINEAR)
-            )
+            cameras[key] = np.array(Image.fromarray(cameras[key]).resize((224, 224), Image.Resampling.BILINEAR))
         state = []
         for key in self.robot_keys:
             state.append(obs[key]["joints"])
@@ -90,16 +88,24 @@ class RCSDuoBench(EvaluatorEnv):
         )
 
     def step(self, action: Act) -> tuple[Obs, float, bool, bool, dict]:
-        assert len(action.action.shape) == 1, "this function cannot deal with batches or action chunks, please return single actions"
+        assert (
+            len(action.action.shape) == 1
+        ), "this function cannot deal with batches or action chunks, please return single actions"
         env_action = {}
         for idx, robot in enumerate(self.robot_keys):
             if self.control_mode == "joints":
-                env_action[robot] = {"joints": action.action[idx*8:idx*8+7], "gripper": action.action[idx*8+7:idx*8+8]}
+                env_action[robot] = {
+                    "joints": action.action[idx * 8 : idx * 8 + 7],
+                    "gripper": action.action[idx * 8 + 7 : idx * 8 + 8],
+                }
             else:
-                env_action[robot] = {"xyzrpy": action.action[idx*7:idx*7+6], "gripper": action.action[idx*7+6:idx*7+7]}
+                env_action[robot] = {
+                    "xyzrpy": action.action[idx * 7 : idx * 7 + 6],
+                    "gripper": action.action[idx * 7 + 6 : idx * 7 + 7],
+                }
         obs, reward, success, truncated, info = self.env.step(env_action)
         r = float(reward)
-        
+
         return self.translate_obs(obs), r, success, truncated, info
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
@@ -115,17 +121,19 @@ class RCSDuoBench(EvaluatorEnv):
     @staticmethod
     def do_import():
         import rcs
-        from rcs_duobench.tasks import ball_maze
-        from rcs_duobench.tasks import bin_sort
-        from rcs_duobench.tasks import block_balance
-        from rcs_duobench.tasks import carry_pot
-        from rcs_duobench.tasks import join_blocks
-        from rcs_duobench.tasks import hinge_chest
-        from rcs_duobench.tasks import pour_marbles
-        from rcs_duobench.tasks import spring_door
-        from rcs_duobench.tasks import transfer_cube
-        from rcs_duobench.tasks import transfer_gate
-        from rcs_duobench.tasks import transfer_reorient
+        from rcs_duobench.tasks import (
+            ball_maze,
+            bin_sort,
+            block_balance,
+            carry_pot,
+            hinge_chest,
+            join_blocks,
+            pour_marbles,
+            spring_door,
+            transfer_cube,
+            transfer_gate,
+            transfer_reorient,
+        )
 
 
 EvaluatorEnv.register("duobench/ball_maze", RCSDuoBench)
@@ -395,7 +403,9 @@ def _write_camera_mp4(frames: list[np.ndarray], output_path: Path, fps: int = 30
     process.wait()
 
 
-def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int) -> tuple[list[float], list[float], list[float]]:
+def single_eval(
+    env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int
+) -> tuple[list[float], list[float], list[float]]:
     logging.debug(f"Starting evaluation")
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
     cameras = obs.info.pop("high_res_cameras", obs.cameras)
@@ -421,7 +431,7 @@ def single_eval(env: EvaluatorEnv, agent: Agent, max_steps: int, ith_episode: in
     if cam_path is not None and im:
         output_dir = Path(os.environ["CAM_PATH"]) / env.env_id
         output_dir.mkdir(exist_ok=True, parents=True)
-        timestamp = datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         for camera in im[0].keys():
             _write_camera_mp4(
                 [img[camera] for img in im],
@@ -472,7 +482,6 @@ def multi_eval(
 ) -> tuple[np.ndarray, list[list[list[float]]]]:
     # return is [envs, episodes, 3(success, reward, steps)], [envs, episodes, rewards for all steps in the episode]
     logging.info(f"Starting evaluation with {len(cfgs)} environments and {episodes} episodes each")
-
 
     # np.random.seed(cfgs[0].seed)
     args = [(i, cfgs, episodes, agent_cfg) for i in range(len(cfgs) * episodes)]
