@@ -33,7 +33,7 @@ Homepage = "https://github.com/RobotControlStack/vlagents"
 Issues = "https://github.com/RobotControlStack/vlagents/issues"
 
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
   "ruff",
   "black",

@@ -245,7 +245,8 @@ In order to extend the library with a new agent environment, extend the `Evaluat
 ### Developer Tools
 Install the following dev dependencies:
 ```shell
-pip install -ve '.[dev]'
+pip install 'pip>=25.1'
+pip install --group dev
 ```
 
 The following dev tools are provided:
