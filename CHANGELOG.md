@@ -1,3 +1,35 @@
+## v0.2.0 (2026-06-20)
+
+### Feat
+
+- high res cameras in videos
+- **client**: allow reconnection of the client
+- parallelize over envs
+- multi processing over envs
+- xvla and remap key
+- video as mp4
+- add duobench envs
+- add config to wandb
+- **lerobot**: correct resizing and option for temporal ensemble
+- **rcs**: adapt multi robot space
+- **policies**: added support for lerobot policies
+
+### Fix
+
+- fan out for same eval id
+- removed multi processing on single server level
+- env reset in jpeg case
+- multiprocessing of single tasks
+- respect n_action_steps for non act policies
+- left over fixes
+- change reset options default
+- seeding by gym reset and video recording
+- rcs duobench integration and lerobot policies
+
+### Refactor
+
+- remove xvla import and return chunk
+
 ## v0.1.0 (2026-01-16)
 
 ### Feat
