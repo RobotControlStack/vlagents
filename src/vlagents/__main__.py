@@ -18,6 +18,7 @@ os.environ["MPLBACKEND"] = "Agg"
 from vlagents.evaluator_envs import AgentConfig, EvalConfig, evaluation, write_results
 from vlagents.policies import AGENTS
 from vlagents.server import AgentService
+import vlagents.tactile_benchmark_classes
 
 main_app = typer.Typer(help="CLI tool for the vlagents library.")
 
