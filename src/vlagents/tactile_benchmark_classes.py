@@ -5,6 +5,7 @@ import numpy as np
 import logging
 from copy import deepcopy
 
+from tactile_pipeline.policies.act.custom_modules import TemporalImageConcatProcessorStep
 
 class TactileBenchmarkAgent(Agent):
     def __init__(
@@ -33,6 +34,8 @@ class TactileBenchmarkAgent(Agent):
         self.second_backbone_pretrained_path = second_backbone_pretrained_path
         self._subtract_background_override = subtract_background
         self._configured_tactile_image_keys = tactile_image_keys
+        self.digit_history = None
+        self.digit_temporal = None
 
         default_rename_map = {
             "side": "side",
@@ -62,6 +65,8 @@ class TactileBenchmarkAgent(Agent):
         if has_second_backbone:
             if self.second_backbone_pretrained_path is not None:
                 policy_config.second_backbone["pretrained_path"] = self.second_backbone_pretrained_path
+            elif policy_config.second_backbone['name'] in ['digit', 'clip_digit']:
+                pass # digit/clip_digit has no second backbone pretrained path, so we don't need to set it
             else:
                 logging.warning("Policy config has a second backbone, but no pretrained path was provided. ")
 
@@ -79,26 +84,7 @@ class TactileBenchmarkAgent(Agent):
                     self.subtract_background,
                     checkpoint_subtract_background,
                 )
-        logging.info(
-            "Loaded policy: type=%s variant=%s class=%s checkpoint=%s device=%s chunk_size=%s n_action_steps=%s "
-            "temporal_ensemble_coeff=%s freeze_variant_backbone=%s "
-            "subtract_background=%s image_keys=%s",
-            policy_config.type,
-            getattr(self.policy.config, "act_variant", "n/a"),
-            self.policy.__class__.__name__,
-            self.path,
-            self.device,
-            getattr(self.policy.config, "chunk_size", "n/a"),
-            self.policy.config.n_action_steps,
-            getattr(self.policy.config, "temporal_ensemble_coeff", "n/a"),
-            getattr(self.policy.config, "freeze_variant_backbone", "n/a"),
-            self.subtract_background,
-            [
-                key.removeprefix("observation.images.")
-                for key in self.policy.config.input_features
-                if key.startswith("observation.images.")
-            ],
-        )
+
         self.policy_input_image_keys = [
             key.removeprefix("observation.images.")
             for key in self.policy.config.input_features
@@ -135,6 +121,27 @@ class TactileBenchmarkAgent(Agent):
             for key, feature in self.policy.config.input_features.items()
             if key.startswith("observation.images.")
         }
+
+        # Need an automated way to deal with temporal history in general,
+        # but currently only dino uses it, so...
+        if policy_config.second_backbone is not None and (policy_config.second_backbone.get("name", None) == "dino" or policy_config.second_backbone.get("name", None) == "clip_dino") :
+            self.digit_history = {}
+            self.digit_resize = {}
+            self.image_size = policy_config.second_backbone.get('image_size', None)
+
+            if self.image_size is None:
+                self.image_size = policy_config.second_backbone.get('tactile_encoder').get('image_size')
+
+            for key in self.tactile_image_keys:
+                self.digit_temporal = 5
+                self.digit_history[key] = deque([], maxlen=self.digit_temporal)
+                self.digit_resize[key] = (3, *self.image_size)
+            
+            self.digit_in_channel = policy_config.second_backbone.get('in_chans', None)
+
+            if self.digit_in_channel is None:
+                self.digit_in_channel = policy_config.second_backbone.get('tactile_encoder').get('in_chans', None)
+
         self._camera_transforms = {
             key: v2.Compose(
                 [
@@ -171,6 +178,32 @@ class TactileBenchmarkAgent(Agent):
             UnnormalizerProcessorStep,
             expected_features=self.policy.config.output_features,
             processor_name="postprocessor",
+        )
+        # During initialize(), after loading the processor:
+        self.preprocessor.steps = [
+            step
+            for step in self.preprocessor.steps
+            if not isinstance(step, TemporalImageConcatProcessorStep)
+        ]
+        logging.info(
+            "Loaded policy: type=%s variant=%s class=%s checkpoint=%s device=%s chunk_size=%s n_action_steps=%s "
+            "temporal_ensemble_coeff=%s freeze_variant_backbone=%s "
+            "subtract_background=%s image_keys=%s",
+            policy_config.type,
+            getattr(self.policy.config, "act_variant", "n/a"),
+            self.policy.__class__.__name__,
+            self.path,
+            self.device,
+            getattr(self.policy.config, "chunk_size", "n/a"),
+            self.policy.config.n_action_steps,
+            getattr(self.policy.config, "temporal_ensemble_coeff", "n/a"),
+            getattr(self.policy.config, "freeze_variant_backbone", "n/a"),
+            self.subtract_background,
+            [
+                key.removeprefix("observation.images.")
+                for key in self.policy.config.input_features
+                if key.startswith("observation.images.")
+            ],
         )
 
     @staticmethod
@@ -240,6 +273,32 @@ class TactileBenchmarkAgent(Agent):
                 image = image - blank
             observation[f"observation.images.{key}"] = image
         observation = self.preprocessor(observation)
+
+        if self.digit_temporal:
+            for key in self.tactile_image_keys:
+                if f"observation.images.{key}" not in observation:
+                    continue
+                # Somehow it's already concatenated
+                frame = observation[f"observation.images.{key}"]  # [B, 3, H, W]
+                frame = torch.nn.functional.interpolate(
+                    frame,
+                    size=tuple(self.image_size),
+                    mode="bilinear",
+                    align_corners=False,
+                )
+                self.digit_history[key].append(frame)
+
+                oldest = self.digit_history[key][0]
+                current = self.digit_history[key][-1]
+
+                image = torch.cat([oldest, current], dim=1)  # [B, 6, H, W]
+                observation[f"observation.images.{key}"] = image
+                assert image.shape[1] == self.digit_in_channel
+
+            if not all(len(self.digit_history[key]) == self.digit_temporal for key in self.tactile_image_keys):
+                # Return neutral pose until we have enough temporal history
+                action = self.postprocessor(observation["observation.state"]).detach().squeeze().float().cpu().numpy()
+                return Act(action=np.asarray(action, dtype=np.float32))
         with torch.inference_mode():
             action = self.policy.select_action(observation)
             # action = self.policy.predict_action_chunk(observation)
@@ -250,8 +309,7 @@ class TactileBenchmarkAgent(Agent):
             action = action.detach().float().cpu().numpy()
 
         action = np.squeeze(action, axis=0)
-        # action[-2] += np.pi/4 # dirty fix before we clean the data and train again
-        # Home pose
+
         return Act(action=np.asarray(action, dtype=np.float32))
 
     def reset(self, obs: Obs, instruction: Any, **kwargs) -> dict[str, Any]:
