@@ -164,6 +164,14 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
 * ICL export of the first 10 `transfer_cube/sim` episodes in both spaces (149 keyframes, 3 MB with 224 px
   head images).
 
-Not yet run: any episode with a real GPT model (needs `OPENAI_API_KEY`). Software rendering costs ~0.4 s per
+* **First real pilot run** (`backend: mailbox`, a Claude Code subagent answering the requests, Cartesian
+  mode, no in-context examples): `duobench/transfer_cube` solved in one episode, all 4 stages, 22 commands
+  (662 env steps). The run exposed and fixed one control bug (primitives below 3 cm were dropped by the RCS
+  1 mm command threshold). Observed pilot behaviour: approach from above, verify alignment in the wrist
+  camera before descending, separate gripper command, rolled the right gripper sideways for the hand-over,
+  used the reported pose deltas to correct by centimetres. Cost: roughly one to two minutes of wall clock per
+  command with software rendering.
+
+Not yet run: any episode through the API backends (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Software rendering costs ~0.4 s per
 camera image (shadow map of 4096 px), so evaluations on CPU nodes are slow; on a GPU this disappears. For CPU
 debugging, lowering `spec.visual.quality.shadowsize` on the composed model before `Sim(...)` gives a 5x speedup.
