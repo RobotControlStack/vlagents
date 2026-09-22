@@ -102,6 +102,8 @@ class EvalConfig:
     same_machine: bool = False
     jpeg_encoding: bool = False
     image_size: tuple[int, int] | None = (224, 224)
+    request_timeout: float | None = 300
+    """seconds the client waits for the policy before reconnecting; None for slow policies"""
     simulate_inference_delay: bool = False
     """keep executing the previous action for as long as the agent needed to reply (at control_frequency Hz)"""
     control_frequency: float = 30.0

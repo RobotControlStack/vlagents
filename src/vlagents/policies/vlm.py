@@ -328,7 +328,7 @@ class OpenAIBackend:
         self.model = model or "gpt-5"
         self.request_kwargs = request_kwargs
 
-    def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
+    def complete(self, messages: list[Any], step: int = 0) -> tuple[str, dict[str, Any]]:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=messages,
@@ -381,7 +381,7 @@ class AnthropicBackend:
                 converted.append({"role": message["role"], "content": blocks})
         return system, converted
 
-    def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
+    def complete(self, messages: list[Any], step: int = 0) -> tuple[str, dict[str, Any]]:
         system, converted = self._convert(messages)
         response = self.client.messages.create(
             model=self.model, system=system, messages=converted, **self.request_kwargs
@@ -428,13 +428,14 @@ class MailboxBackend:
                 lines.append(f"![{stem} {counter}]({path.relative_to(self.root)})\n")
         return "\n".join(lines)
 
-    def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
+    def complete(self, messages: list[Any], step: int = 0) -> tuple[str, dict[str, Any]]:
         if self.episode_dir is None or len(messages) <= self.written:
             self._new_episode()
         assert self.episode_dir is not None
-        step = sum(1 for m in messages if m["role"] == "user") - 1
         step_dir = self.episode_dir / f"step_{step:03d}"
         step_dir.mkdir(exist_ok=True)
+        reply_path = step_dir / "reply.json"
+        reply_path.unlink(missing_ok=True)  # a repeated request for the same step supersedes an older reply
         new_messages = messages[self.written :]
         # earlier messages (system prompt, demonstrations, retries) keep their images in the episode folder
         rendered = []
@@ -456,7 +457,6 @@ class MailboxBackend:
             + f"\n\nWrite your reply (one JSON object as described in system.md) to {step_dir.relative_to(self.root)}/reply.json\n"
         )
         self.written = len(messages)
-        reply_path = step_dir / "reply.json"
         start = time.time()
         while not reply_path.exists():
             if time.time() - start > self.timeout:
@@ -476,7 +476,7 @@ class FakeBackend:
         ]
         self.calls = 0
 
-    def complete(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    def complete(self, messages: list[Any], step: int = 0) -> tuple[str, dict[str, Any]]:
         reply = self.replies[self.calls % len(self.replies)]
         self.calls += 1
         return reply, {"prompt_messages": len(messages)}
@@ -702,7 +702,7 @@ class VLMAgent(Agent):
                     }
                 )
             start = time.time()
-            reply, usage = self.backend.complete(messages)
+            reply, usage = self.backend.complete(messages, step=len(self.turns) - 1)
             latency = time.time() - start
             try:
                 commands = parse_json_reply(reply)

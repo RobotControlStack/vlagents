@@ -149,6 +149,7 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[EvalEn
             on_same_machine=cfg.same_machine,
             jpeg_encoding=cfg.jpeg_encoding,
             image_size=cfg.image_size,
+            request_timeout=cfg.request_timeout,
         )
         logging.info("done creating agent")
         per_process_cache[key] = (env, agent)

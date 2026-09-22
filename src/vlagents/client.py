@@ -47,6 +47,7 @@ class RemoteAgent(Agent):
         on_same_machine: bool = False,
         jpeg_encoding: bool = False,
         image_size: tuple[int, int] | None = (224, 224),
+        request_timeout: float | None = 300,
     ):
         """Connect to a remote agent service.
 
@@ -60,6 +61,8 @@ class RemoteAgent(Agent):
                 Defaults to False.
             image_size (tuple[int, int] | None, optional): Image size as (width, height) applied before
                 serialization. Set to None to retain native resolution. Defaults to (224, 224).
+            request_timeout (float | None, optional): Seconds to wait for a reply before reconnecting and
+                retrying; None waits forever (slow policies such as VLMs or human pilots). Defaults to 300.
         """
         self.host = host
         self.port = port
@@ -67,6 +70,7 @@ class RemoteAgent(Agent):
         self.on_same_machine = on_same_machine
         self.jpeg_encoding = jpeg_encoding
         self.image_size = self._validate_image_size(image_size)
+        self.request_timeout = request_timeout
         self._shm: dict[str, shared_memory.SharedMemory] = {}
         self.c = None
         self._connect()
@@ -75,7 +79,7 @@ class RemoteAgent(Agent):
         self.c = rpyc.connect(
             self.host,
             self.port,
-            config={"allow_pickle": True, "allow_public_attrs": True, "sync_request_timeout": 300},
+            config={"allow_pickle": True, "allow_public_attrs": True, "sync_request_timeout": self.request_timeout},
         )
         assert self.model == self.c.root.name()
 
