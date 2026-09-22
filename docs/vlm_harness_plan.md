@@ -172,6 +172,18 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
   used the reported pose deltas to correct by centimetres. Cost: roughly one to two minutes of wall clock per
   command with software rendering.
 
+Lessons from the pilot run, to fold into the harness next:
+
+* The task text says "cube" but the object is a 3.2 x 3.2 x 9.6 cm upright box; four commands were lost on
+  its top edge. Object dimensions (or a task hint via `extra_instructions`) belong in the prompt, ideally
+  supplied by the env.
+* Every move falls 0.5 to 1.8 cm and about 3 deg short within one second (controller lag); the pilot
+  compensated from the reported pose. A short note in the prompt or a settle step would remove the surprise.
+* The request should report the gripper width (`gripper_width` is already in the info) and optionally the
+  joints, which would have revealed the stalled descent immediately.
+* Finger contacts with objects do not raise the RCS collision flag, so a blocked motion is only visible from
+  the unchanged pose.
+
 Not yet run: any episode through the API backends (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Software rendering costs ~0.4 s per
 camera image (shadow map of 4096 px), so evaluations on CPU nodes are slow; on a GPU this disappears. For CPU
 debugging, lowering `spec.visual.quality.shadowsize` on the composed model before `Sim(...)` gives a 5x speedup.
