@@ -1,4 +1,7 @@
-"""Vision-language-model agent: a general VLM (e.g. GPT through the OpenAI API) controls the robot.
+"""Vision-language-model agent: a general VLM controls the robot.
+
+Backends: any OpenAI compatible endpoint, the Anthropic API, a file mailbox served by an external pilot such as a
+Claude Code subagent or a human, and a fake for tests.
 
 Each call sends the full episode history plus the current cameras and state, and receives one JSON command
 per arm. Commands are motion primitives that expand into a chunk of `chunk_size` actions (1 s at 30 Hz).
@@ -298,11 +301,13 @@ class JointSpace:
 
 
 class OpenAIBackend:
-    def __init__(self, model: str, base_url: str | None, api_key_env: str, request_kwargs: dict[str, Any]):
+    """Any OpenAI compatible chat-completions endpoint (OpenAI, vLLM, ...)."""
+
+    def __init__(self, model: str | None, base_url: str | None, api_key_env: str, request_kwargs: dict[str, Any]):
         from openai import OpenAI
 
         self.client = OpenAI(base_url=base_url, api_key=os.environ.get(api_key_env))
-        self.model = model
+        self.model = model or "gpt-5"
         self.request_kwargs = request_kwargs
 
     def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
@@ -314,6 +319,124 @@ class OpenAIBackend:
         )
         usage = response.usage.model_dump() if response.usage is not None else {}
         return response.choices[0].message.content or "", usage
+
+
+class AnthropicBackend:
+    """Claude through the Anthropic Messages API (adaptive thinking is on by default on current models)."""
+
+    def __init__(self, model: str | None, base_url: str | None, api_key_env: str, request_kwargs: dict[str, Any]):
+        import anthropic
+
+        api_key = os.environ.get(api_key_env) if api_key_env != "ANTHROPIC_API_KEY" else None
+        self.client = anthropic.Anthropic(base_url=base_url, api_key=api_key)
+        self.model = model or "claude-opus-5"
+        self.request_kwargs = {"max_tokens": 4096, **request_kwargs}
+
+    @staticmethod
+    def _convert(messages: list[Any]) -> tuple[list[Any], list[Any]]:
+        system: list[Any] = []
+        converted: list[Any] = []
+        for message in messages:
+            content = message["content"]
+            if isinstance(content, str):
+                converted.append({"role": message["role"], "content": content})
+                continue
+            blocks = []
+            for part in content:
+                if part["type"] == "text":
+                    blocks.append({"type": "text", "text": part["text"]})
+                else:
+                    data = part["image_url"]["url"].split(",", 1)[1]
+                    blocks.append(
+                        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": data}}
+                    )
+            if message["role"] == "system":
+                # the system prompt cannot carry images, so reference pictures open the conversation instead
+                system += [block for block in blocks if block["type"] == "text"]
+                images = [block for block in blocks if block["type"] == "image"]
+                if images:
+                    converted.append(
+                        {"role": "user", "content": [*images, {"type": "text", "text": "Reference pictures."}]}
+                    )
+                    converted.append({"role": "assistant", "content": "Understood."})
+            else:
+                converted.append({"role": message["role"], "content": blocks})
+        return system, converted
+
+    def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
+        system, converted = self._convert(messages)
+        response = self.client.messages.create(
+            model=self.model, system=system, messages=converted, **self.request_kwargs
+        )
+        if response.stop_reason == "refusal":
+            return "", {"stop_reason": "refusal"}
+        text = "".join(block.text for block in response.content if block.type == "text")
+        return text, response.usage.model_dump()
+
+
+class MailboxBackend:
+    """Hands each request to an external pilot through the file system.
+
+    A subagent (e.g. a Claude Code agent) or a human reads `<episode>/step_XXX/request.md` and the images next
+    to it and answers by writing `reply.json` into the same folder. `system.md` holds the system prompt once
+    per episode; `conversation.md` accumulates the whole dialogue.
+    """
+
+    def __init__(self, mailbox_dir: str, timeout: float = 1800.0):
+        self.root = Path(mailbox_dir)
+        self.timeout = timeout
+        self.episode_dir: Path | None = None
+        self.written = 0
+
+    def _new_episode(self):
+        self.episode_dir = self.root / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
+        self.episode_dir.mkdir(parents=True)
+        self.written = 0
+
+    def _render(self, message: dict[str, Any], step_dir: Path) -> str:
+        content = message["content"]
+        if isinstance(content, str):
+            return f"### {message['role']}\n\n{content}\n"
+        lines = [f"### {message['role']}\n"]
+        image_index = 0
+        for part in content:
+            if part["type"] == "text":
+                lines.append(part["text"] + "\n")
+            else:
+                image_index += 1
+                path = step_dir / f"image_{image_index}.jpg"
+                path.write_bytes(base64.b64decode(part["image_url"]["url"].split(",", 1)[1]))
+                lines.append(f"![image {image_index}]({path.relative_to(self.root)})\n")
+        return "\n".join(lines)
+
+    def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
+        if self.episode_dir is None or len(messages) <= self.written:
+            self._new_episode()
+        assert self.episode_dir is not None
+        step = sum(1 for m in messages if m["role"] == "user") - 1
+        step_dir = self.episode_dir / f"step_{step:03d}"
+        step_dir.mkdir(exist_ok=True)
+        new_messages = messages[self.written :]
+        rendered = [self._render(message, step_dir) for message in new_messages]
+        if self.written == 0:
+            (self.episode_dir / "system.md").write_text(rendered[0])
+            rendered = rendered[1:]
+        with (self.episode_dir / "conversation.md").open("a") as f:
+            f.write("\n".join(rendered))
+        (step_dir / "request.md").write_text(
+            "\n".join(rendered[-1:])
+            + f"\n\nWrite your reply (one JSON object as described in system.md) to {step_dir.relative_to(self.root)}/reply.json\n"
+        )
+        self.written = len(messages)
+        reply_path = step_dir / "reply.json"
+        start = time.time()
+        while not reply_path.exists():
+            if time.time() - start > self.timeout:
+                msg = f"no reply in {reply_path} after {self.timeout:.0f} s"
+                raise TimeoutError(msg)
+            time.sleep(0.5)
+        time.sleep(0.2)  # let the writer finish
+        return reply_path.read_text(), {"latency": time.time() - start}
 
 
 class FakeBackend:
@@ -334,11 +457,12 @@ class FakeBackend:
 class VLMAgent(Agent):
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str | None = None,
         base_url: str | None = None,
-        api_key_env: str = "OPENAI_API_KEY",
+        api_key_env: str | None = None,
         backend: str = "openai",
         fake_replies: list[str] | None = None,
+        mailbox_dir: str | None = None,
         control_mode: str = "xyzrpy",
         chunk_size: int = 30,
         fps: int = 30,
@@ -358,13 +482,14 @@ class VLMAgent(Agent):
         device: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(default_checkpoint_path=model, **kwargs)
+        super().__init__(default_checkpoint_path=model or backend, **kwargs)
         self.device = device  # set by the eval CLI, no GPU needed here
         self.model = model
         self.base_url = base_url
-        self.api_key_env = api_key_env
+        self.api_key_env = api_key_env or ("ANTHROPIC_API_KEY" if backend == "anthropic" else "OPENAI_API_KEY")
         self.backend_name = backend
         self.fake_replies = fake_replies
+        self.mailbox_dir = mailbox_dir
         self.control_mode = control_mode
         self.chunk_size = chunk_size
         self.fps = fps
@@ -388,8 +513,13 @@ class VLMAgent(Agent):
         self.episode_dir: Path | None = None
 
     def initialize(self):
+        self.backend: OpenAIBackend | AnthropicBackend | MailboxBackend | FakeBackend
         if self.backend_name == "fake":
-            self.backend: OpenAIBackend | FakeBackend = FakeBackend(self.fake_replies)
+            self.backend = FakeBackend(self.fake_replies)
+        elif self.backend_name == "mailbox":
+            self.backend = MailboxBackend(self.mailbox_dir or str(self.log_dir or "vlm_mailbox"))
+        elif self.backend_name == "anthropic":
+            self.backend = AnthropicBackend(self.model, self.base_url, self.api_key_env, self.request_kwargs)
         else:
             self.backend = OpenAIBackend(self.model, self.base_url, self.api_key_env, self.request_kwargs)
         reference_paths: list[str | Path] = (
@@ -506,7 +636,12 @@ class VLMAgent(Agent):
             self.episode_dir = self.log_dir / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
             self.episode_dir.mkdir(parents=True, exist_ok=True)
             (self.episode_dir / "system_prompt.txt").write_text(self._system_text())
-        return {"model": self.model, "control_mode": self.space.control_mode, "icl_messages": len(self.icl_messages)}
+        return {
+            "backend": self.backend_name,
+            "model": self.model,
+            "control_mode": self.space.control_mode,
+            "icl_messages": len(self.icl_messages),
+        }
 
     def act(self, obs: Obs) -> Act:
         super().act(obs)

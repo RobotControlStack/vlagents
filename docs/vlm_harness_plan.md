@@ -1,6 +1,6 @@
 # VLM Robot-Control Harness: Plan
 
-Goal: let a general-purpose VLM (first target: GPT via the OpenAI API) control the Franka FR3 Duo and solve
+Goal: let a general-purpose VLM (any API model, or a Claude Code agent acting as the pilot) control the Franka FR3 Duo and solve
 DuoBench tasks, using the existing RCS / vlagents / DuoBench stack, with the same code path for simulation
 (mass evaluation through the vlagents CLI) and the real robot (RCS inference script).
 
@@ -51,8 +51,9 @@ canonicalises orientation from the quaternion (`tquat`) with pitch in [-90, 90] 
    `max_relative_movement`, `frequency`), forward `xyzrpy`/`tquat` and the stage info (`stage`,
    `current_subinstruction`, `stage_to_subinstructions`, `success`, `collision`, `ik_success`) in
    `SingleObs.info` so any agent can see reached subgoals. The action key equals the control mode string.
-3. **`vlm` agent** (`policies/vlm.py`): OpenAI-compatible chat-completions client (works with GPT and with any
-   OpenAI-compatible server such as vLLM for open VLMs). One request per chunk with the full episode history.
+3. **`vlm` agent** (`policies/vlm.py`): one request per chunk with the full episode history, served by a
+   pluggable backend: OpenAI-compatible chat completions (GPT, vLLM), the Anthropic Messages API, or a file
+   mailbox so that a Claude Code subagent (or a human) is the policy without any API code.
 4. **ICL exporter** (`policies/vlm_icl.py`): reads a LeRobot v3 dataset (parquet + av1 mp4), takes the first
    `n <= 10` episodes, subsamples every 30 frames and writes (observation -> command) pairs in exactly the
    agent's output schema, in joint space and, via RCS FK (`rcs.common.Pin`), in TCP space.
@@ -73,7 +74,9 @@ Interface: `python -m vlagents start-server vlm --kwargs '{...}'`; agent kwargs
 
 | kwarg | meaning |
 | --- | --- |
-| `model`, `base_url`, `api_key_env` | OpenAI-compatible endpoint (default `gpt-5`, key from `OPENAI_API_KEY`) |
+| `backend` | `openai` (any OpenAI-compatible endpoint), `anthropic` (Claude via the Messages API), `mailbox` (an external pilot answers through files: a Claude Code subagent following `.claude/skills/robot-pilot`, or a human), `fake` (tests) |
+| `model`, `base_url`, `api_key_env` | model id and endpoint of the API backends (defaults `gpt-5` / `claude-opus-5`) |
+| `mailbox_dir` | folder of the mailbox backend (`<episode>/system.md`, `step_XXX/request.md` + images, `reply.json`) |
 | `control_mode` | `joints` or `xyzrpy` (must match the env) |
 | `chunk_size` / `fps` | 30 actions = 1 s |
 | `history` | `full` (default), or an int: keep images only for the last N turns, older turns text-only |

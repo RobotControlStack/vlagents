@@ -183,8 +183,11 @@ python -m vlagents start-server openpi --port=8080 --host=localhost --kwargs='{"
 # vjepa2-ac
 python -m vlagents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/<your_config>.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
 
-# general VLM (GPT or any OpenAI compatible endpoint) controlling the tool pose, see "VLM agent" below
-OPENAI_API_KEY=... python -m vlagents start-server vlm --port 8080 --host 0.0.0.0 --kwargs '{"model": "gpt-5", "control_mode": "xyzrpy", "log_dir": "runs/vlm"}'
+# general VLM controlling the tool pose, see "VLM agent" below
+OPENAI_API_KEY=... python -m vlagents start-server vlm --port 8080 --host 0.0.0.0 --kwargs '{"backend": "openai", "model": "gpt-5", "control_mode": "xyzrpy", "log_dir": "runs/vlm"}'
+ANTHROPIC_API_KEY=... python -m vlagents start-server vlm --port 8080 --host 0.0.0.0 --kwargs '{"backend": "anthropic", "model": "claude-opus-5", "control_mode": "xyzrpy", "log_dir": "runs/vlm"}'
+# a Claude Code subagent or a human answers the requests written to mailbox_dir
+python -m vlagents start-server vlm --port 8080 --host 0.0.0.0 --kwargs '{"backend": "mailbox", "mailbox_dir": "runs/vlm/mailbox", "control_mode": "xyzrpy"}'
 ```
 
 Episodes are stateful: `RemoteAgent.reset(obs, instruction)` is called once per episode before the first `act` (the eval loop does this automatically, `examples/inference/franka.py` in RCS does it when an episode starts). Policies without memory can ignore it.
@@ -200,7 +203,8 @@ Images are resized by `RemoteAgent` before shared-memory or JPEG transport. Set 
 - Cartesian (`control_mode` `xyzrpy` or `tquat`): `hold`, `gripper`, `move` (absolute xyz + rpy in degrees), `move_delta`, or a raw `chunk`.
 - Joint space (`control_mode` `joints`): `hold`, `gripper`, `move_joints` (degrees), `move_joints_delta`, or a raw `chunk`.
 
-Important kwargs: `model`, `base_url` (any OpenAI compatible server, e.g. vLLM), `control_mode`, `history` (`"full"` or number of recent turns that keep their images), `image_size`, `icl_path`/`icl_episodes`/`icl_images` (in-context demonstrations), `log_dir` (per episode dump of prompts, images, replies and token usage), `backend: "fake"` (canned replies for tests). The env must run in the same control mode, e.g. `"env_kwargs": {"control_mode": "xyzrpy"}` for the duobench envs.
+Backends (`backend` kwarg): `openai` (any OpenAI compatible endpoint, default model `gpt-5`), `anthropic` (Anthropic API, default `claude-opus-5`, key from `ANTHROPIC_API_KEY`), `mailbox` (requests are written to `mailbox_dir` and answered by an external pilot such as a Claude Code subagent or a human, see [.claude/skills/robot-pilot](.claude/skills/robot-pilot/SKILL.md)) and `fake`.
+Important kwargs: `model`, `base_url` (e.g. a vLLM server), `control_mode`, `history` (`"full"` or number of recent turns that keep their images), `image_size`, `icl_path`/`icl_episodes`/`icl_images` (in-context demonstrations), `log_dir` (per episode dump of prompts, images, replies and token usage), `backend: "fake"` (canned replies for tests). The env must run in the same control mode, e.g. `"env_kwargs": {"control_mode": "xyzrpy"}` for the duobench envs.
 
 In-context examples are exported from a LeRobot dataset (at most 10 episodes), e.g. for the DuoBench transfer cube task:
 ```shell

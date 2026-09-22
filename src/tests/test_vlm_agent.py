@@ -127,3 +127,47 @@ def test_agent_history_window_drops_old_images():
     user_turns = [m for m in agent._messages() if m["role"] == "user"]
     assert all(part["type"] == "text" for part in user_turns[0]["content"])
     assert any(part["type"] == "image_url" for part in user_turns[1]["content"])
+
+
+def test_anthropic_message_conversion():
+    from vlagents.policies.vlm import AnthropicBackend, image_part
+
+    messages = [
+        {"role": "system", "content": [{"type": "text", "text": "rules"}, image_part("QUJD", "auto")]},
+        {"role": "user", "content": [{"type": "text", "text": "obs"}, image_part("QUJD", "auto")]},
+        {"role": "assistant", "content": '{"done": false}'},
+    ]
+    system, converted = AnthropicBackend._convert(messages)
+    assert system == [{"type": "text", "text": "rules"}]
+    assert [m["role"] for m in converted] == ["user", "assistant", "user", "assistant"]
+    assert converted[0]["content"][0] == {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": "QUJD"},
+    }
+    assert converted[2]["content"][0] == {"type": "text", "text": "obs"}
+
+
+def test_mailbox_backend_roundtrip(tmp_path):
+    import threading
+    import time
+
+    def pilot():
+        while not list(tmp_path.rglob("request.md")):
+            time.sleep(0.05)
+        request = next(tmp_path.rglob("request.md"))
+        assert "Step 0" in request.read_text()
+        assert (request.parent / "image_1.jpg").exists()
+        assert "rules" in (request.parent.parent / "system.md").read_text()
+        (request.parent / "reply.json").write_text(
+            '{"reasoning": "pilot", "left": {"type": "hold"}, "right": {"type": "hold"}, "done": false}'
+        )
+
+    agent = VLMAgent(backend="mailbox", mailbox_dir=str(tmp_path), extra_instructions="rules", control_mode="xyzrpy")
+    agent.initialize()
+    agent.backend.timeout = 10
+    threading.Thread(target=pilot, daemon=True).start()
+    obs = _obs()
+    agent.reset(obs, obs.language_instruction)
+    act = agent.act(obs)
+    assert len(act.acts) == 30
+    assert agent.turns[0]["reply"].startswith('{"reasoning": "pilot"')
