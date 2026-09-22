@@ -41,7 +41,9 @@ ROBOT_DESCRIPTION = """\
 You control a bimanual robot: two Franka Research 3 arms ("left" and "right") mounted side by side on a
 shared base, both facing the same table (Franka FR3 Duo). Each arm has 7 joints and a Robotiq 2F-85 parallel
 gripper (85 mm max opening). Gripper commands are binary: 1 = open, 0 = closed; closing takes about half a
-second. Only the gripper pads can hold objects, so the fingers must be around the object before closing.
+second. Only the gripper pads can hold objects, so the fingers must be around the object before closing. The
+reported opening tells whether a closed gripper holds something: near 0 % it closed on nothing, a 3 cm object
+keeps it at roughly 35 %.
 The arms can collide with each other, the table and objects; keep the tool a few centimetres above the table
 unless you are grasping or placing."""
 
@@ -111,6 +113,14 @@ Each joint may change by at most {max_joint_delta:.0f} degrees per command; larg
 Targets are clipped to the joint limits."""
 
 
+def gripper_text(single_obs: SingleObs) -> str:
+    text = "open" if (single_obs.gripper or 0) > 0.5 else "closed"
+    width = single_obs.info.get("gripper_width")
+    if width is not None:
+        text += f" (opening {float(width) * 100:.0f} %)"
+    return text
+
+
 def rpy_deg(rot: Rotation) -> list[int]:
     """Roll/pitch/yaw in whole degrees with roll = +180 (not -180) for a downward pointing tool."""
     rpy = rot.as_euler("xyz", degrees=True)
@@ -174,8 +184,7 @@ class CartesianSpace:
 
     def state_text(self, single_obs: SingleObs) -> str:
         xyz, rot = self.pose(single_obs)
-        gripper = "open" if (single_obs.gripper or 0) > 0.5 else "closed"
-        return f"tool xyz = {np.round(xyz, 3).tolist()} m, rpy = {rpy_deg(rot)} deg, gripper {gripper}"
+        return f"tool xyz = {np.round(xyz, 3).tolist()} m, rpy = {rpy_deg(rot)} deg, gripper {gripper_text(single_obs)}"
 
     def target_command(self, target_obs: SingleObs) -> dict[str, Any]:
         xyz, rot = self.pose(target_obs)
@@ -265,8 +274,7 @@ class JointSpace:
 
     def state_text(self, single_obs: SingleObs) -> str:
         joints = np.round(np.rad2deg(np.asarray(single_obs.joints, dtype=float)), 0).astype(int).tolist()
-        gripper = "open" if (single_obs.gripper or 0) > 0.5 else "closed"
-        text = f"joints = {joints} deg, gripper {gripper}"
+        text = f"joints = {joints} deg, gripper {gripper_text(single_obs)}"
         if single_obs.tquat is not None:
             xyz, rot = CartesianSpace.pose(single_obs)
             text += f" (resulting tool xyz = {np.round(xyz, 3).tolist()} m, rpy = {rpy_deg(rot)} deg)"

@@ -1,7 +1,7 @@
 """Export in-context examples for the VLM agent from a LeRobot v3 dataset (e.g. RobotControlStack/duobench).
 
 Takes the first `episodes` episodes, samples every `stride` frames and stores the observation together with the
-state `stride` frames later (the target of the next chunk) plus one JPEG keyframe. The agent renders these into
+state reached `stride` frames later (the target of the next chunk) plus one JPEG keyframe. The agent renders these into
 its own state text and command format, so the examples always match the live prompt.
 
     python -m vlagents.policies.vlm_icl <dataset_dir> <out.json> --episodes 10 --control-mode xyzrpy
@@ -99,10 +99,10 @@ def export(
         episode_index, start, length = int(row["episode_index"]), int(row["dataset_from_index"]), int(row["length"])
         rows = data.iloc[start : start + length]
         states = np.stack(rows["observation.state"].to_numpy())
-        actions = np.stack(rows["action"].to_numpy())
         steps = []
         for t, frame in keyframes[episode_index]:
-            target = actions[min(t + stride - 1, length - 1)]
+            # the state reached one chunk later; raw teleoperation targets overshoot the reached pose by far
+            target = states[min(t + stride, length - 1)]
             steps.append(
                 {
                     "t": t,

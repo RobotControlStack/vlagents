@@ -209,3 +209,10 @@ def test_agent_flags_unreached_target_in_next_request():
     agent.act(obs)
     agent.act(obs)  # the arm did not move
     assert "was not reached: 10.0 cm" in agent.turns[1]["text"]
+
+
+def test_gripper_opening_is_reported_when_available():
+    obs = _single_obs()
+    obs.gripper = 0.0
+    obs.info["gripper_width"] = 0.37
+    assert "gripper closed (opening 37 %)" in CartesianSpace("xyzrpy", 30, 0.3, 90).state_text(obs)
