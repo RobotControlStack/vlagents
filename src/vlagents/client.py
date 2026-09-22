@@ -1,8 +1,9 @@
 import base64
+import copy
 import dataclasses
 from dataclasses import asdict
 from multiprocessing import shared_memory
-from typing import get_args, get_origin
+from typing import Any, get_args, get_origin
 
 import json_numpy
 import numpy as np
@@ -195,6 +196,17 @@ class RemoteAgent(Agent):
             self.reconnect()
             assert self.c is not None
             return dataclass_from_dict(Act, json_numpy.loads(self.c.root.act(obs)))
+
+    def reset(self, obs: Obs, instruction: str | None = None, **kwargs) -> dict[str, Any]:
+        obs = self._process(copy.deepcopy(obs))
+        args = json_numpy.dumps((asdict(obs), instruction, kwargs))
+        try:
+            assert self.c is not None
+            return json_numpy.loads(self.c.root.reset(args))
+        except Exception:
+            self.reconnect()
+            assert self.c is not None
+            return json_numpy.loads(self.c.root.reset(args))
 
     def git_status(self) -> str:
         assert self.c is not None

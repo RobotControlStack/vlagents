@@ -74,6 +74,7 @@ def single_eval(
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
     if obs.language_instruction is None:
         obs.language_instruction = env.language_instruction
+    agent.reset(obs, obs.language_instruction)
     single_obs = next(iter(obs.obs.values()))
     cameras = single_obs.info.pop("high_res_cameras", single_obs.cameras)
     logging.debug("Reset env")

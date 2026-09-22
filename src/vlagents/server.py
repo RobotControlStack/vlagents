@@ -45,11 +45,9 @@ class AgentService(rpyc.Service):
         print(f"AgentService initialized with {self._name} after {round(t2 - t1)} seconds")
         logging.info(f"AgentService initialized with {self._name} after {round(t2 - t1)} seconds")
 
-    @rpyc.exposed
-    def act(self, obs_bytes: bytes) -> str:
-        assert self._is_initialized, "AgentService not initialized, wait until is_initialized is True"
-        # action, done, info
-        obs = typing.cast(Obs, dataclass_from_dict(Obs, json_numpy.loads(obs_bytes)))
+    @staticmethod
+    def _decode_obs(obs_dict: dict) -> Obs:
+        obs = typing.cast(Obs, dataclass_from_dict(Obs, obs_dict))
         for single_obs in obs.obs.values():
             if single_obs.camera_data_type == CameraDataType.SHARED_MEMORY:
                 single_obs.cameras = {
@@ -58,7 +56,19 @@ class AgentService(rpyc.Service):
                 }
         if obs.goal_image_data_type == CameraDataType.SHARED_MEMORY and obs.goal_image is not None:
             obs.goal_image = dataclass_from_dict(SharedMemoryPayload, obs.goal_image)
+        return obs
+
+    @rpyc.exposed
+    def act(self, obs_bytes: bytes) -> str:
+        assert self._is_initialized, "AgentService not initialized, wait until is_initialized is True"
+        obs = self._decode_obs(json_numpy.loads(obs_bytes))
         return json_numpy.dumps(asdict(self.agent.act(obs)))
+
+    @rpyc.exposed
+    def reset(self, args_bytes: bytes) -> str:
+        assert self._is_initialized, "AgentService not initialized, wait until is_initialized is True"
+        obs_dict, instruction, kwargs = json_numpy.loads(args_bytes)
+        return json_numpy.dumps(self.agent.reset(self._decode_obs(obs_dict), instruction, **kwargs))
 
     @rpyc.exposed
     def name(self) -> str:

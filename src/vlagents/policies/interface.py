@@ -183,6 +183,13 @@ class Agent:
             ]
         )
 
+    def reset(self, obs: Obs, instruction: str | None = None, **kwargs) -> dict[str, Any]:
+        """Start a new episode. Stateful agents override this to clear their memory; returns an info dict."""
+        self.instruction = instruction if instruction is not None else obs.language_instruction
+        self.step = -1
+        self._to_numpy(obs)
+        return {}
+
     def act(self, obs: Obs) -> Act:
         self.instruction = obs.language_instruction
         self.step += 1

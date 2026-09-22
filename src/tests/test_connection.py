@@ -109,3 +109,18 @@ def test_connection_preserves_native_resolution():
                 sleep(0.1)
             _test_connection_without_resize(agent)
         p.send_signal(subprocess.signal.SIGINT)
+
+
+def test_reset_roundtrip():
+    with start_server("test", {}, 8080, "localhost") as p:
+        sleep(2)
+        agent = RemoteAgent("localhost", 8080, "test", jpeg_encoding=True)
+        with agent:
+            while not agent.is_initialized():
+                sleep(0.1)
+            obs = _make_obs(np.zeros((256, 256, 3), dtype=np.uint8))
+            assert agent.reset(obs, "do something else") == {}
+            # reset must not consume the caller's observation
+            assert isinstance(obs.obs["right"].cameras["rgb_side"], np.ndarray)
+            agent.act(obs)
+        p.send_signal(subprocess.signal.SIGINT)
