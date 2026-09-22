@@ -182,12 +182,31 @@ python -m vlagents start-server openpi --port=8080 --host=localhost --kwargs='{"
 
 # vjepa2-ac
 python -m vlagents start-server vjepa --port=20997 --host=0.0.0.0 --kwargs='{"cfg_path": "configs/inference/vjepa2-ac-vitg/<your_config>.yaml", "model_name": "vjepa2_ac_vit_giant", "default_checkpoint_path": "../.cache/torch/hub/checkpoints/vjepa2-ac-vitg.pt"}'
+
+# general VLM (GPT or any OpenAI compatible endpoint) controlling the tool pose, see "VLM agent" below
+OPENAI_API_KEY=... python -m vlagents start-server vlm --port 8080 --host 0.0.0.0 --kwargs '{"model": "gpt-5", "control_mode": "xyzrpy", "log_dir": "runs/vlm"}'
 ```
+
+Episodes are stateful: `RemoteAgent.reset(obs, instruction)` is called once per episode before the first `act` (the eval loop does this automatically, `examples/inference/franka.py` in RCS does it when an episode starts). Policies without memory can ignore it.
 
 
 Each policy returns an `Act` action chunk. During evaluation, `EvalEnv.chunk_step` applies the chunk one environment step at a time. Configure `execution_horizon` in an evaluation config to cap how many actions from each chunk are executed before requesting a new one.
 
 Images are resized by `RemoteAgent` before shared-memory or JPEG transport. Set `image_size` in an evaluation config to a `[width, height]` pair (default `[224, 224]`), or `null` to keep native resolution.
+
+### VLM agent
+`vlagents/policies/vlm.py` lets a general vision-language model control the robot through motion primitives. Every call sends the system prompt (robot, coordinate frame, workspace, cameras, output schema), the full episode history and the current images and state, and expects one JSON command per arm which is expanded into a chunk of `chunk_size` actions (30 actions = 1 s at 30 Hz):
+
+- Cartesian (`control_mode` `xyzrpy` or `tquat`): `hold`, `gripper`, `move` (absolute xyz + rpy in degrees), `move_delta`, or a raw `chunk`.
+- Joint space (`control_mode` `joints`): `hold`, `gripper`, `move_joints` (degrees), `move_joints_delta`, or a raw `chunk`.
+
+Important kwargs: `model`, `base_url` (any OpenAI compatible server, e.g. vLLM), `control_mode`, `history` (`"full"` or number of recent turns that keep their images), `image_size`, `icl_path`/`icl_episodes`/`icl_images` (in-context demonstrations), `log_dir` (per episode dump of prompts, images, replies and token usage), `backend: "fake"` (canned replies for tests). The env must run in the same control mode, e.g. `"env_kwargs": {"control_mode": "xyzrpy"}` for the duobench envs.
+
+In-context examples are exported from a LeRobot dataset (at most 10 episodes), e.g. for the DuoBench transfer cube task:
+```shell
+python -m vlagents.policies.vlm_icl <lerobot_dataset_dir> transfer_cube_icl.json --episodes 10 --stride 30 --control-mode xyzrpy --image-size 224
+```
+See [docs/vlm_harness_plan.md](docs/vlm_harness_plan.md) for the design and the experiment plan.
 
 There is also the `run-eval-during-training` command to evaluate a model during training, so a single checkpoint.
 The `run-eval-post-training` command evaluates a range of checkpoints in parallel.

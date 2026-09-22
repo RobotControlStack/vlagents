@@ -17,6 +17,7 @@ dependencies = [
   "pillow",
   "tqdm",
   "simplejpeg",
+  "scipy",
 ]
 readme = "README.md"
 maintainers = [{ name = "Tobias Jülg", email = "tobias.juelg@utn.de" }]
@@ -44,6 +45,9 @@ dev = [
   "commitizen",
 ]
 
+
+[tool.setuptools.package-data]
+vlagents = ["policies/assets/*.png"]
 
 [tool.ruff]
 line-length = 120
