@@ -172,7 +172,13 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
   used the reported pose deltas to correct by centimetres. Cost: roughly one to two minutes of wall clock per
   command with software rendering.
 
-Lessons from the pilot run, to fold into the harness next:
+* **Second pilot run, harder task** (`duobench/hinge_chest`, same setup, object and lid geometry given in
+  the pilot prompt): solved in 25 commands (722 env steps). The right arm pried the thin lid open with its
+  closed fingertips and held it on the arc about the hinge while the left arm grasped the cube, lost it once
+  during the carry, re-grasped it and dropped it into the open chest. Both arms were commanded in parallel
+  in most steps.
+
+Lessons from the pilot runs, to fold into the harness next:
 
 * The task text says "cube" but the object is a 3.2 x 3.2 x 9.6 cm upright box; four commands were lost on
   its top edge. Object dimensions (or a task hint via `extra_instructions`) belong in the prompt, ideally
