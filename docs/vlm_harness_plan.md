@@ -178,6 +178,14 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
   during the carry, re-grasped it and dropped it into the open chest. Both arms were commanded in parallel
   in most steps.
 
+* **Runs 3 and 4 (hinge_chest with simulated inference delay).** The eval now renders only the last step of a
+  chunk (RCS `render` action flag) and keeps the robot on its previous command for as long as the policy took
+  to reply (`simulate_inference_delay`). Run 3 (no demonstrations) solved the task in 26 commands, the same as
+  without delay: the scene is static once the lid is held. Run 4 with three human demonstrations in context
+  (head keyframes, one pair per second) solved it in 10 commands: the pilot copied the demonstrated lid sweep
+  and placement pose and only read object positions from the images. Environment time per command fell from
+  43 s to 11 s (now the simulated hold, physics only).
+
 Lessons from the pilot runs, to fold into the harness next:
 
 * The task text says "cube" but the object is a 3.2 x 3.2 x 9.6 cm upright box; four commands were lost on
@@ -188,7 +196,12 @@ Lessons from the pilot runs, to fold into the harness next:
 * The request should report the gripper width (`gripper_width` is already in the info) and optionally the
   joints, which would have revealed the stalled descent immediately.
 * Finger contacts with objects do not raise the RCS collision flag, so a blocked motion is only visible from
-  the unchanged pose.
+  the unchanged pose (the agent now flags "the commanded target was not reached" itself; IK reports failures
+  outside the joint limits).
+* Demonstration commands must be reached states, not raw teleoperation targets (fixed in the exporter after
+  run 4). A "closed" gripper is not a grasp: the state text now reports the gripper opening.
+* The wrist camera mount (offset and tilt relative to the tool) should be described in the prompt; both chest
+  pilots lost commands to a wrong mental model of it.
 
 Not yet run: any episode through the API backends (needs `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`). Software rendering costs ~0.4 s per
 camera image (shadow map of 4096 px), so evaluations on CPU nodes are slow; on a GPU this disappears. For CPU
