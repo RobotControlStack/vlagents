@@ -24,16 +24,24 @@ class EvalEnv(ABC):
         self.do_import()
         self.env = self.make_gym()
         self.last_chunk_steps = 0
+        self.render_next_step = True
+        self.last_action: dict[str, SingleAct] | None = None
 
     def chunk_step(self, actions: Act, max_steps: int | None = None) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
         if not actions.acts:
             raise ValueError("Agents must return at least one action")
         rewards = []
         self.last_chunk_steps = 0
-        for action in actions.acts:
-            if max_steps is not None and self.last_chunk_steps >= max_steps:
-                break
+        n_steps = len(actions.acts)
+        if max_steps is not None:
+            n_steps = min(n_steps, max_steps)
+        if self.execution_horizon is not None:
+            n_steps = min(n_steps, self.execution_horizon)
+        for action in actions.acts[:n_steps]:
+            # only the observation the agent sees next needs camera images
+            self.render_next_step = self.last_chunk_steps == n_steps - 1
             obs, reward, done, truncated, info = self.step(action)
+            self.last_action = action
             rewards.append(reward)
             self.last_chunk_steps += 1
             if (
@@ -45,6 +53,21 @@ class EvalEnv(ABC):
         if not rewards:
             raise ValueError("max_steps must allow at least one environment step")
         return obs, sum(rewards), done, truncated, info
+
+    def hold(self, n_steps: int) -> tuple[bool, bool]:
+        """Keep executing the last action for n_steps without rendering, e.g. to simulate the time the policy
+        needed for inference. Returns the (done, truncated) flags of the last step; last_chunk_steps counts them."""
+        done = truncated = False
+        self.last_chunk_steps = 0
+        if self.last_action is None:
+            return done, truncated
+        for _ in range(n_steps):
+            self.render_next_step = False
+            _, _, done, truncated, _ = self.step(self.last_action)
+            self.last_chunk_steps += 1
+            if done or truncated:
+                break
+        return done, truncated
 
     def step(self, action: dict[str, SingleAct]) -> tuple[Obs, float, bool, bool, dict]:
         raise NotImplementedError
@@ -79,6 +102,9 @@ class EvalConfig:
     same_machine: bool = False
     jpeg_encoding: bool = False
     image_size: tuple[int, int] | None = (224, 224)
+    simulate_inference_delay: bool = False
+    """keep executing the previous action for as long as the agent needed to reply (at control_frequency Hz)"""
+    control_frequency: float = 30.0
 
 
 @dataclass

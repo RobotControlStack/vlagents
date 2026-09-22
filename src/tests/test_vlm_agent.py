@@ -173,14 +173,39 @@ def test_mailbox_backend_roundtrip(tmp_path):
     assert agent.turns[0]["reply"].startswith('{"reasoning": "pilot"')
 
 
-def test_small_moves_keep_per_step_deltas_above_the_rcs_threshold():
+def test_small_moves_are_interpolated_uniformly():
     space = CartesianSpace("xyzrpy", 30, 0.3, 90)
     actions, _ = space.expand({"type": "move_delta", "dxyz": [0.024, 0, 0]}, _single_obs())
-    deltas = np.linalg.norm(np.diff(actions[:, :3], axis=0), axis=1)
-    assert np.all((deltas > 0.0025) | (deltas == 0))
+    deltas = np.diff(actions[:, 0])
+    np.testing.assert_allclose(deltas, 0.024 / 30)
     np.testing.assert_allclose(actions[-1, :3], HOME_TQUAT[:3] + [0.024, 0, 0])
-    actions, _ = JointSpace(30, 45, FR3_JOINT_LIMITS_DEG).expand(
-        {"type": "move_joints_delta", "djoints_deg": [1, 0, 0, 0, 0, 0, 0]}, _single_obs()
+
+
+def test_deviation_flag_reports_unreached_targets():
+    space = CartesianSpace("xyzrpy", 30, 0.3, 90)
+    obs = _single_obs()
+    reached, _ = space.expand({"type": "move_delta", "dxyz": [0.01, 0, 0]}, obs)
+    assert space.deviation(reached[-1], obs) is None
+    far, _ = space.expand({"type": "move_delta", "dxyz": [0.1, 0, 0]}, obs)
+    assert "10.0 cm" in space.deviation(far[-1], obs)
+    joints = JointSpace(30, 45, FR3_JOINT_LIMITS_DEG)
+    turned, _ = joints.expand({"type": "move_joints_delta", "djoints_deg": [20, 0, 0, 0, 0, 0, 0]}, obs)
+    assert "20 deg" in joints.deviation(turned[-1], obs)
+
+
+def test_agent_flags_unreached_target_in_next_request():
+    reply = json.dumps(
+        {
+            "reasoning": "go",
+            "left": {"type": "hold"},
+            "right": {"type": "move_delta", "dxyz": [0.1, 0, 0]},
+            "done": False,
+        }
     )
-    assert np.rad2deg(actions[0, 0] - HOME_JOINTS[0]) == pytest.approx(0.2)
-    assert np.rad2deg(actions[-1, 0] - HOME_JOINTS[0]) == pytest.approx(1.0)
+    agent = VLMAgent(backend="fake", fake_replies=[reply], control_mode="xyzrpy")
+    agent.initialize()
+    obs = _obs()
+    agent.reset(obs)
+    agent.act(obs)
+    agent.act(obs)  # the arm did not move
+    assert "was not reached: 10.0 cm" in agent.turns[1]["text"]

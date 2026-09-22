@@ -111,13 +111,6 @@ Each joint may change by at most {max_joint_delta:.0f} degrees per command; larg
 Targets are clipped to the joint limits."""
 
 
-def interpolation_steps(chunk_size: int, *fractions: float) -> np.ndarray:
-    """Progress values 0..1 for a chunk: the motion is spread over enough steps that every step still changes the
-    target noticeably (RCS ignores commands within 1 mm / 1 mrad of the previous one), then the target is held."""
-    n_motion = int(np.clip(np.ceil(max(fractions, default=0.0)), 1, chunk_size))
-    return np.concatenate([np.linspace(0, 1, n_motion + 1)[1:], np.ones(chunk_size - n_motion)])
-
-
 def rpy_deg(rot: Rotation) -> list[int]:
     """Roll/pitch/yaw in whole degrees with roll = +180 (not -180) for a downward pointing tool."""
     rpy = rot.as_euler("xyz", degrees=True)
@@ -225,12 +218,23 @@ class CartesianSpace:
         if angle > self.max_rotation_deg:
             rel = Rotation.from_rotvec(rel.as_rotvec() * self.max_rotation_deg / angle)
             rot1 = rel * rot0
-        translation, rotation = float(np.linalg.norm(xyz1 - xyz0)), float(np.rad2deg(rel.magnitude()))
-        steps = interpolation_steps(self.chunk_size, translation / 0.003, rotation / 0.3)
+        steps = np.linspace(0, 1, self.chunk_size + 1)[1:]
         xyz = xyz0 + steps[:, None] * (xyz1 - xyz0)
         rots = Slerp([0, 1], Rotation.concatenate([rot0, rot1]))(steps)
         gripper = float(command.get("gripper", gripper0))
         return self._format(xyz, rots), np.full(self.chunk_size, gripper)
+
+    def deviation(self, target: np.ndarray, single_obs: SingleObs) -> str | None:
+        xyz, rot = self.pose(single_obs)
+        if self.control_mode == "tquat":
+            target_rot = Rotation.from_quat(target[3:])
+        else:
+            target_rot = Rotation.from_euler("xyz", target[3:])
+        translation = float(np.linalg.norm(target[:3] - xyz))
+        angle = float(np.rad2deg((target_rot * rot.inv()).magnitude()))
+        if translation > 0.02 or angle > 10:
+            return f"the commanded target was not reached: {translation * 100:.1f} cm and {angle:.0f} deg away"
+        return None
 
     def _format(self, xyz: np.ndarray, rots: Rotation) -> np.ndarray:
         if self.control_mode == "tquat":
@@ -275,6 +279,12 @@ class JointSpace:
             "gripper": int(round(target_obs.gripper or 0)),
         }
 
+    def deviation(self, target: np.ndarray, single_obs: SingleObs) -> str | None:
+        error = float(np.max(np.abs(np.rad2deg(target - np.asarray(single_obs.joints, dtype=float)))))
+        if error > 5:
+            return f"the commanded target was not reached: a joint is {error:.0f} deg away"
+        return None
+
     def expand(self, command: dict[str, Any], single_obs: SingleObs) -> tuple[np.ndarray, np.ndarray]:
         q0 = np.rad2deg(np.asarray(single_obs.joints, dtype=float))
         gripper0 = float(single_obs.gripper if single_obs.gripper is not None else 1.0)
@@ -303,7 +313,7 @@ class JointSpace:
         if scale > 1:
             delta = delta / scale
         q1 = np.clip(q0 + delta, *self.joint_limits_deg)
-        steps = interpolation_steps(self.chunk_size, float(np.max(np.abs(q1 - q0))) / 0.2)
+        steps = np.linspace(0, 1, self.chunk_size + 1)[1:]
         gripper = float(command.get("gripper", gripper0))
         return np.deg2rad(q0 + steps[:, None] * (q1 - q0)), np.full(self.chunk_size, gripper)
 
@@ -395,26 +405,27 @@ class MailboxBackend:
         self.timeout = timeout
         self.episode_dir: Path | None = None
         self.written = 0
+        self.context_images = 0
 
     def _new_episode(self):
         self.episode_dir = self.root / datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S_%f")
         self.episode_dir.mkdir(parents=True)
         self.written = 0
+        self.context_images = 0
 
-    def _render(self, message: dict[str, Any], step_dir: Path) -> str:
+    def _render(self, message: dict[str, Any], directory: Path, stem: str, counter: int = 0) -> str:
         content = message["content"]
         if isinstance(content, str):
             return f"### {message['role']}\n\n{content}\n"
         lines = [f"### {message['role']}\n"]
-        image_index = 0
         for part in content:
             if part["type"] == "text":
                 lines.append(part["text"] + "\n")
             else:
-                image_index += 1
-                path = step_dir / f"image_{image_index}.jpg"
+                counter += 1
+                path = directory / f"{stem}_{counter}.jpg"
                 path.write_bytes(base64.b64decode(part["image_url"]["url"].split(",", 1)[1]))
-                lines.append(f"![image {image_index}]({path.relative_to(self.root)})\n")
+                lines.append(f"![{stem} {counter}]({path.relative_to(self.root)})\n")
         return "\n".join(lines)
 
     def complete(self, messages: list[Any]) -> tuple[str, dict[str, Any]]:
@@ -425,7 +436,16 @@ class MailboxBackend:
         step_dir = self.episode_dir / f"step_{step:03d}"
         step_dir.mkdir(exist_ok=True)
         new_messages = messages[self.written :]
-        rendered = [self._render(message, step_dir) for message in new_messages]
+        # earlier messages (system prompt, demonstrations, retries) keep their images in the episode folder
+        rendered = []
+        for message in new_messages[:-1]:
+            rendered.append(self._render(message, self.episode_dir, "context", self.context_images))
+            self.context_images += (
+                sum(1 for part in message["content"] if part["type"] != "text")
+                if not isinstance(message["content"], str)
+                else 0
+            )
+        rendered.append(self._render(new_messages[-1], step_dir, "image"))
         if self.written == 0:
             (self.episode_dir / "system.md").write_text(rendered[0])
             rendered = rendered[1:]
@@ -516,6 +536,7 @@ class VLMAgent(Agent):
         else:
             self.space = CartesianSpace(control_mode, chunk_size, max_translation, max_rotation_deg)
         self.turns: list[dict[str, Any]] = []
+        self.targets: dict[str, np.ndarray] = {}
         self.system_message: dict[str, Any] | None = None
         self.icl_messages: list[dict[str, Any]] = []
         self.episode_dir: Path | None = None
@@ -582,6 +603,10 @@ class VLMAgent(Agent):
                 flags.append("collision detected during the last second")
             if single_obs.info.get("ik_success") is False:
                 flags.append("the last target was unreachable (IK failed)")
+            if robot in self.targets:
+                deviation = self.space.deviation(self.targets[robot], single_obs)
+                if deviation:
+                    flags.append(deviation)
             lines.append(
                 f"{robot} arm: {self.space.state_text(single_obs)}" + (f" [{'; '.join(flags)}]" if flags else "")
             )
@@ -638,6 +663,7 @@ class VLMAgent(Agent):
     def reset(self, obs: Obs, instruction: str | None = None, **kwargs) -> dict[str, Any]:
         super().reset(obs, instruction, **kwargs)
         self.turns = []
+        self.targets = {}
         content: list[dict[str, Any]] = [{"type": "text", "text": self._system_text()}, *self.reference_parts]
         self.system_message = {"role": "system", "content": content}
         if self.log_dir is not None:
@@ -695,6 +721,7 @@ class VLMAgent(Agent):
     def _expand(self, commands: dict[str, Any], obs: Obs) -> list[dict[str, SingleAct]]:
         done = bool(commands.get("done", False))
         per_robot = {robot: self.space.expand(commands[robot], single_obs) for robot, single_obs in obs.obs.items()}
+        self.targets = {robot: actions[-1] for robot, (actions, _) in per_robot.items()}
         return [
             {
                 robot: SingleAct(

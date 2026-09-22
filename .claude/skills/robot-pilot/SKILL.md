@@ -51,6 +51,10 @@ Loop until the episode ends (no new `step_XXX/request.md` appears for a while, o
 4. The next request shows the result (new pose, stage progress, collision or IK flags). Small moves and
    checking the wrist cameras before closing the gripper work better than large jumps.
 
+When the agent runs with in-context demonstrations (`icl_path`), `conversation.md` starts with them: pairs of a
+demonstration observation (state text plus `context_N.jpg` keyframes in the episode folder) and the command that
+reproduced the next second of the recording. Read them once before answering step 0.
+
 A persistent subagent (Agent tool, then SendMessage per step) keeps its own memory of the episode; a fresh
 agent per step should read `conversation.md` first. Results land in the eval `results_*.json`, videos under
 `videos/`, and the agent's own log under the `log_dir` kwarg if set.

@@ -83,7 +83,7 @@ class RCSDuoBench(EvalEnv):
         )
 
     def step(self, action: dict[str, SingleAct]) -> tuple[Obs, float, bool, bool, dict]:
-        env_action = {}
+        env_action: dict[str, Any] = {"render": self.render_next_step}
         for robot in self.robot_keys:
             robot_action = action[robot]
             gripper = 0.0 if robot_action.gripper is None else robot_action.gripper

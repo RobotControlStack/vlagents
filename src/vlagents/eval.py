@@ -8,6 +8,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
+import time
 from time import sleep
 from typing import Any
 
@@ -68,7 +69,13 @@ def _write_camera_mp4(frames: list[np.ndarray], output_path: Path, fps: int = 30
 
 
 def single_eval(
-    env: EvalEnv, agent: Agent, max_steps: int, ith_episode: int, start_seed: int
+    env: EvalEnv,
+    agent: Agent,
+    max_steps: int,
+    ith_episode: int,
+    start_seed: int,
+    simulate_inference_delay: bool = False,
+    control_frequency: float = 30.0,
 ) -> tuple[list[float], list[float], list[float]]:
     logging.debug("Starting evaluation")
     obs, _ = env.reset(seed=start_seed + ith_episode)  # ensure different seed for each episode
@@ -81,12 +88,23 @@ def single_eval(
     done = False
     truncated = False
     step = 0.0
+    reward = 0.0
     rewards = []
     im = []
     while not done and not truncated and max_steps > step:
         if obs.language_instruction is None:
             obs.language_instruction = env.language_instruction
-        obs, reward, done, truncated, _ = env.chunk_step(agent.act(obs), max_steps=max_steps - int(step))
+        start = time.time()
+        act = agent.act(obs)
+        if simulate_inference_delay:
+            # the robot keeps executing the previous command while the policy thinks
+            delay_steps = min(int(round((time.time() - start) * control_frequency)), max_steps - int(step) - 1)
+            done, truncated = env.hold(max(delay_steps, 0))
+            step += env.last_chunk_steps
+            if done or truncated:
+                rewards.append(rewards[-1] if rewards else 0.0)
+                break
+        obs, reward, done, truncated, _ = env.chunk_step(act, max_steps=max_steps - int(step))
         if obs.language_instruction is None:
             obs.language_instruction = env.language_instruction
         single_obs = next(iter(obs.obs.values()))
@@ -145,7 +163,15 @@ def run_episode(args: tuple[int, list[EvalConfig], int, AgentConfig]) -> tuple[l
     while not agent.is_initialized():
         logging.info("Waiting for agent to initialize...")
         sleep(5)
-    return single_eval(env, agent, cfg.max_steps_per_episode, i, start_seed=cfg.seed)
+    return single_eval(
+        env,
+        agent,
+        cfg.max_steps_per_episode,
+        i,
+        start_seed=cfg.seed,
+        simulate_inference_delay=cfg.simulate_inference_delay,
+        control_frequency=cfg.control_frequency,
+    )
 
 
 def multi_eval(
