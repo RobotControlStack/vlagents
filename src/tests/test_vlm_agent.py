@@ -171,3 +171,16 @@ def test_mailbox_backend_roundtrip(tmp_path):
     act = agent.act(obs)
     assert len(act.acts) == 30
     assert agent.turns[0]["reply"].startswith('{"reasoning": "pilot"')
+
+
+def test_small_moves_keep_per_step_deltas_above_the_rcs_threshold():
+    space = CartesianSpace("xyzrpy", 30, 0.3, 90)
+    actions, _ = space.expand({"type": "move_delta", "dxyz": [0.024, 0, 0]}, _single_obs())
+    deltas = np.linalg.norm(np.diff(actions[:, :3], axis=0), axis=1)
+    assert np.all((deltas > 0.0025) | (deltas == 0))
+    np.testing.assert_allclose(actions[-1, :3], HOME_TQUAT[:3] + [0.024, 0, 0])
+    actions, _ = JointSpace(30, 45, FR3_JOINT_LIMITS_DEG).expand(
+        {"type": "move_joints_delta", "djoints_deg": [1, 0, 0, 0, 0, 0, 0]}, _single_obs()
+    )
+    assert np.rad2deg(actions[0, 0] - HOME_JOINTS[0]) == pytest.approx(0.2)
+    assert np.rad2deg(actions[-1, 0] - HOME_JOINTS[0]) == pytest.approx(1.0)

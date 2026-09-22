@@ -111,6 +111,13 @@ Each joint may change by at most {max_joint_delta:.0f} degrees per command; larg
 Targets are clipped to the joint limits."""
 
 
+def interpolation_steps(chunk_size: int, *fractions: float) -> np.ndarray:
+    """Progress values 0..1 for a chunk: the motion is spread over enough steps that every step still changes the
+    target noticeably (RCS ignores commands within 1 mm / 1 mrad of the previous one), then the target is held."""
+    n_motion = int(np.clip(np.ceil(max(fractions, default=0.0)), 1, chunk_size))
+    return np.concatenate([np.linspace(0, 1, n_motion + 1)[1:], np.ones(chunk_size - n_motion)])
+
+
 def rpy_deg(rot: Rotation) -> list[int]:
     """Roll/pitch/yaw in whole degrees with roll = +180 (not -180) for a downward pointing tool."""
     rpy = rot.as_euler("xyz", degrees=True)
@@ -218,7 +225,8 @@ class CartesianSpace:
         if angle > self.max_rotation_deg:
             rel = Rotation.from_rotvec(rel.as_rotvec() * self.max_rotation_deg / angle)
             rot1 = rel * rot0
-        steps = np.linspace(0, 1, self.chunk_size + 1)[1:]
+        translation, rotation = float(np.linalg.norm(xyz1 - xyz0)), float(np.rad2deg(rel.magnitude()))
+        steps = interpolation_steps(self.chunk_size, translation / 0.003, rotation / 0.3)
         xyz = xyz0 + steps[:, None] * (xyz1 - xyz0)
         rots = Slerp([0, 1], Rotation.concatenate([rot0, rot1]))(steps)
         gripper = float(command.get("gripper", gripper0))
@@ -295,7 +303,7 @@ class JointSpace:
         if scale > 1:
             delta = delta / scale
         q1 = np.clip(q0 + delta, *self.joint_limits_deg)
-        steps = np.linspace(0, 1, self.chunk_size + 1)[1:]
+        steps = interpolation_steps(self.chunk_size, float(np.max(np.abs(q1 - q0))) / 0.2)
         gripper = float(command.get("gripper", gripper0))
         return np.deg2rad(q0 + steps[:, None] * (q1 - q0)), np.full(self.chunk_size, gripper)
 
