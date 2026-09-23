@@ -239,6 +239,42 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
   produced 4 000 to 4 500 relabelled steps after subsampling the holds; the correction data is in
   `runs/maze/*/residual` and `runs/maze/*/vlm`.
 
+* **In-context learning with minimal reasoning (hand-over, `duobench/transfer_cube`, seed 42).** Question: can
+  demonstrations in context replace what a VLA learns from data, if the model is not allowed to reason? Pilots
+  were told to reply immediately with at most 12 words of reasoning and to imitate the demonstrations
+  (rendered as observation and reached-state command pairs with head keyframes). Reference: the first pilot
+  run of this task (full reasoning, no demonstrations) succeeded in 23 commands.
+
+  | pilot model | demos | success | commands | final stage | pilot latency median |
+  |---|---|---|---|---|---|
+  | small (haiku) | 0 | no | 22 | 0 | 14 s |
+  | small (haiku) | 3 | no | 32 | 0 | 2 s |
+  | small (haiku) | 10 | no | 31 | 0 | 1 s |
+  | strong | 0 | no | 28 | 0 | 30 s |
+  | strong | 10 | yes | 22 | 4 | 21 s |
+  | strong, full reasoning (run 1) | 0 | yes | 23 | 4 | 37 s |
+
+  The small model with demonstrations replayed demonstration 0 verbatim: its grasp command was the
+  demonstrated pose to the millimetre although the cube stood elsewhere, it closed on nothing (18 % opening)
+  and then followed the demonstrated sequence to the end, reporting success from the images while the stage
+  counter stayed at 0. The strong model without reasoning mislocalised the cube from the head camera for 18
+  commands and never grasped it; with 10 demonstrations it grasped, handed over, recovered a slipped cube and
+  placed it in 22 commands, using the demonstrations for the grasp pattern, the tilted hand-over poses and the
+  release height while reading the cube and bowl positions from the images. Single episodes each, so the
+  ordering is the finding, not the numbers.
+
+Lessons from the in-context runs:
+
+* Demonstrations transfer strategy, poses relative to the object and calibration; they do not transfer
+  grounding. The failure mode without grounding is verbatim replay, and a model that replays also
+  hallucinates success, so the stage counter (or another external success signal) must be the only ground
+  truth in the prompt.
+* Reasoning length was not the bottleneck for latency in this harness: a 12-word reasoning cap left the strong
+  pilot at 21 to 30 s per command because viewing three images and writing the reply dominate. The API
+  backends do not have this overhead.
+* Zero-shot direct actions need reasoning; with good demonstrations the same model gets by almost without it.
+  For a fast loop the split is: reason once to plan, then imitate.
+
 Lessons from the ball-maze runs:
 
 * Hindsight corrections are cheap to collect (the pilot writes them in the same reply) and precise (millimetre

@@ -43,8 +43,8 @@ You control a bimanual robot: two Franka Research 3 arms ("left" and "right") mo
 shared base, both facing the same table (Franka FR3 Duo). Each arm has 7 joints and a Robotiq 2F-85 parallel
 gripper (85 mm max opening). Gripper commands are binary: 1 = open, 0 = closed; closing takes about half a
 second. Only the gripper pads can hold objects, so the fingers must be around the object before closing. The
-reported opening tells whether a closed gripper holds something: near 0 % it closed on nothing, a 3 cm object
-keeps it at roughly 35 %.
+reported opening tells whether a closed gripper holds something: about 18 % means it closed on nothing, a 3 cm
+object keeps it at roughly 35 %.
 The arms can collide with each other, the table and objects; keep the tool a few centimetres above the table
 unless you are grasping or placing."""
 
