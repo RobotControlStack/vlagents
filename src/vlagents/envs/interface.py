@@ -26,8 +26,16 @@ class EvalEnv(ABC):
         self.last_chunk_steps = 0
         self.render_next_step = True
         self.last_action: dict[str, SingleAct] | None = None
+        """the last executed action (after editing)"""
+        self.last_nominal: dict[str, SingleAct] | None = None
+        """the last action as the agent wrote it"""
+        self.last_obs: Obs | None = None
+        self.editor: Any | None = None
+        """optional ChunkEditor (see vlagents.policies.residual) applied to every action before execution"""
 
-    def chunk_step(self, actions: Act, max_steps: int | None = None) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
+    def chunk_step(
+        self, actions: Act, max_steps: int | None = None, obs: Obs | None = None
+    ) -> tuple[Obs, float, bool, bool, dict[str, Any]]:
         if not actions.acts:
             raise ValueError("Agents must return at least one action")
         rewards = []
@@ -37,11 +45,21 @@ class EvalEnv(ABC):
             n_steps = min(n_steps, max_steps)
         if self.execution_horizon is not None:
             n_steps = min(n_steps, self.execution_horizon)
-        for action in actions.acts[:n_steps]:
+        if obs is not None:
+            self.last_obs = obs
+        goal = actions.acts[n_steps - 1]
+        if self.editor is not None:
+            self.editor.begin_chunk()
+        for i, nominal in enumerate(actions.acts[:n_steps]):
             # only the observation the agent sees next needs camera images
             self.render_next_step = self.last_chunk_steps == n_steps - 1
+            action = nominal
+            if self.editor is not None and self.last_obs is not None:
+                action = self.editor.edit(nominal, self.last_obs, i, n_steps, goal)
             obs, reward, done, truncated, info = self.step(action)
+            self.last_obs = obs
             self.last_action = action
+            self.last_nominal = nominal
             rewards.append(reward)
             self.last_chunk_steps += 1
             if (
@@ -52,6 +70,8 @@ class EvalEnv(ABC):
                 break
         if not rewards:
             raise ValueError("max_steps must allow at least one environment step")
+        if self.editor is not None:
+            self.editor.end_chunk()
         return obs, sum(rewards), done, truncated, info
 
     def hold(self, n_steps: int) -> tuple[bool, bool]:
@@ -61,9 +81,14 @@ class EvalEnv(ABC):
         self.last_chunk_steps = 0
         if self.last_action is None:
             return done, truncated
-        for _ in range(n_steps):
+        for i in range(n_steps):
             self.render_next_step = False
-            _, _, done, truncated, _ = self.step(self.last_action)
+            action = self.last_action
+            if self.editor is not None and self.last_nominal is not None and self.last_obs is not None:
+                # the residual keeps reacting while the agent thinks
+                action = self.editor.edit(self.last_nominal, self.last_obs, i, n_steps, self.last_nominal, holding=True)
+            obs, _, done, truncated, _ = self.step(action)
+            self.last_obs = obs
             self.last_chunk_steps += 1
             if done or truncated:
                 break
@@ -107,6 +132,8 @@ class EvalConfig:
     simulate_inference_delay: bool = False
     """keep executing the previous action for as long as the agent needed to reply (at control_frequency Hz)"""
     control_frequency: float = 30.0
+    editor: dict[str, Any] | None = None
+    """kwargs of vlagents.policies.residual.ResidualEditor; edits every action before execution and records data"""
 
 
 @dataclass

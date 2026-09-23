@@ -84,7 +84,9 @@ and "done" (true only when the task instruction is fully completed).
 Your command is expanded into a chunk of {chunk_size} actions executed over {seconds:.1f} seconds at
 {fps} Hz, then you are asked again with fresh images. Move in small steps (at most about 15 cm per command)
 and verify progress in the next images before continuing. A "gripper" command keeps the arm still for the
-whole chunk while the gripper opens or closes; use it right before lifting."""
+whole chunk while the gripper opens or closes; use it right before lifting. Depending on the setup the robot
+keeps executing your last command until the next one arrives, so prefer commands that are safe to keep
+executing for a while (e.g. a tilt the ball can rest against rather than one that accelerates it into a wall)."""
 
 CARTESIAN_COMMANDS = """\
 Commands per arm (Cartesian mode):
@@ -111,6 +113,19 @@ Commands per arm (joint mode):
         raw chunk of exactly {chunk_size} absolute joint configurations (degrees) and gripper values
 Each joint may change by at most {max_joint_delta:.0f} degrees per command; larger requests are scaled down.
 Targets are clipped to the joint limits."""
+
+
+RESIDUAL_RULES = """\
+A learned residual controller runs underneath you at {fps} Hz: at every control step it may shift the targets of
+your command by up to {translation:.0f} cm and {rotation:.0f} deg per axis based on the live robot and task state
+(for example to keep a ball rolling towards its goal). After each command you are told how much it intervened.
+Help it learn from hindsight: from step 1 on, add the key "correction" to your reply with the adjustment that,
+knowing the outcome, should have been added to the targets of your PREVIOUS command while it executed:
+  "correction": {{"left": {{"dxyz": [dx, dy, dz], "drpy_deg": [dr, dp, dy], "from": 0.0, "to": 1.0}}, "right": null}}
+"dxyz" is in metres, "drpy_deg" in degrees, "from"/"to" are the fraction of the command duration during which
+the adjustment should have applied (omit them for the whole command). Use null for an arm whose executed motion
+was right. Corrections are training labels, not new commands: keep them small (at most 3 cm and 8 deg) and
+still write the next command for the current state."""
 
 
 def gripper_text(single_obs: SingleObs) -> str:
@@ -515,6 +530,9 @@ class VLMAgent(Agent):
         extra_instructions: str = "",
         log_dir: str | None = None,
         request_kwargs: dict[str, Any] | None = None,
+        hindsight_corrections: bool = False,
+        correction_limits: tuple[float, float] = (0.03, 8.0),
+        residual_limits: tuple[float, float] = (0.02, 5.0),
         device: str | None = None,
         **kwargs,
     ) -> None:
@@ -539,12 +557,16 @@ class VLMAgent(Agent):
         self.extra_instructions = extra_instructions
         self.log_dir = Path(log_dir) if log_dir else None
         self.request_kwargs = request_kwargs or {}
+        self.hindsight_corrections = hindsight_corrections
+        self.correction_limits = correction_limits
+        self.residual_limits = residual_limits
         if control_mode == "joints":
             self.space: JointSpace | CartesianSpace = JointSpace(chunk_size, max_joint_delta_deg, FR3_JOINT_LIMITS_DEG)
         else:
             self.space = CartesianSpace(control_mode, chunk_size, max_translation, max_rotation_deg)
         self.turns: list[dict[str, Any]] = []
         self.targets: dict[str, np.ndarray] = {}
+        self.last_gripper: dict[str, float] = {}
         self.system_message: dict[str, Any] | None = None
         self.icl_messages: list[dict[str, Any]] = []
         self.episode_dir: Path | None = None
@@ -589,6 +611,12 @@ class VLMAgent(Agent):
                 "Before the current episode you will see recorded human demonstrations of the same task as pairs "
                 "of observation and the command that reproduces the next second of the demonstration. Imitate them."
             )
+        if self.hindsight_corrections:
+            parts.append(
+                RESIDUAL_RULES.format(
+                    fps=self.fps, translation=self.residual_limits[0] * 100, rotation=self.residual_limits[1]
+                )
+            )
         if self.extra_instructions:
             parts.append(self.extra_instructions)
         return "\n\n".join(parts)
@@ -618,8 +646,50 @@ class VLMAgent(Agent):
             lines.append(
                 f"{robot} arm: {self.space.state_text(single_obs)}" + (f" [{'; '.join(flags)}]" if flags else "")
             )
+        if info.get("task_state_text"):
+            lines.append(info["task_state_text"])
+        summary = info.get("residual_summary")
+        if self.hindsight_corrections and summary and step > 0:
+            parts = [
+                f"{robot} up to {summary[robot]['max_translation_cm']:.1f} cm / {summary[robot]['max_rotation_deg']:.1f} deg "
+                f"(mean shift xyz {np.round(summary[robot]['mean_translation_cm'], 1).tolist()} cm, "
+                f"rpy {np.round(summary[robot]['mean_rotation_deg'], 1).tolist()} deg)"
+                for robot in obs.obs
+                if robot in summary
+            ]
+            lines.append("Residual controller intervention during the last command: " + "; ".join(parts) + ".")
+        if self.hindsight_corrections and step > 0:
+            lines.append('Include "correction" for the previous command (null per arm if it was right).')
         lines.append("Images in order: " + ", ".join(first.cameras.keys()) + ".")
         return "\n".join(lines)
+
+    def _check_correction(self, commands: dict[str, Any], obs: Obs) -> None:
+        """Validate and clip the hindsight correction in place; drop it if malformed."""
+        correction = commands.get("correction")
+        if correction is None:
+            return
+        if not isinstance(correction, dict):
+            logger.warning("dropping malformed correction: %r", correction)
+            commands["correction"] = None
+            return
+        cleaned: dict[str, Any] = {}
+        for robot in obs.obs:
+            entry = correction.get(robot)
+            if entry is None:
+                cleaned[robot] = None
+                continue
+            try:
+                dxyz = np.clip(np.asarray(entry.get("dxyz", [0, 0, 0]), dtype=float), -self.correction_limits[0], self.correction_limits[0])
+                drpy = np.clip(np.asarray(entry.get("drpy_deg", [0, 0, 0]), dtype=float), -self.correction_limits[1], self.correction_limits[1])
+                assert dxyz.shape == (3,) and drpy.shape == (3,)
+                start = float(np.clip(entry.get("from", 0.0), 0.0, 1.0))
+                end = float(np.clip(entry.get("to", 1.0), start, 1.0))
+            except (TypeError, ValueError, AttributeError, AssertionError) as exc:
+                logger.warning("dropping malformed correction for %s: %s", robot, exc)
+                cleaned[robot] = None
+                continue
+            cleaned[robot] = {"dxyz": dxyz.round(4).tolist(), "drpy_deg": drpy.round(2).tolist(), "from": start, "to": end}
+        commands["correction"] = cleaned
 
     def _images(self, obs: Obs) -> list[tuple[str, str]]:
         first = next(iter(obs.obs.values()))
@@ -672,6 +742,7 @@ class VLMAgent(Agent):
         super().reset(obs, instruction, **kwargs)
         self.turns = []
         self.targets = {}
+        self.last_gripper = {}
         content: list[dict[str, Any]] = [{"type": "text", "text": self._system_text()}, *self.reference_parts]
         self.system_message = {"role": "system", "content": content}
         if self.log_dir is not None:
@@ -719,6 +790,8 @@ class VLMAgent(Agent):
                         msg = f"missing command for arm {robot!r}"
                         raise ValueError(msg)
                     self.space.expand(commands[robot], obs.obs[robot])
+                if self.hindsight_corrections:
+                    self._check_correction(commands, obs)
                 return commands, reply, usage, latency, None
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 error = str(exc)
@@ -728,8 +801,16 @@ class VLMAgent(Agent):
 
     def _expand(self, commands: dict[str, Any], obs: Obs) -> list[dict[str, SingleAct]]:
         done = bool(commands.get("done", False))
-        per_robot = {robot: self.space.expand(commands[robot], single_obs) for robot, single_obs in obs.obs.items()}
+        per_robot = {}
+        for robot, single_obs in obs.obs.items():
+            command = commands[robot]
+            if "gripper" not in command and robot in self.last_gripper:
+                # keep the last commanded gripper: the observed opening of a gripper holding a thin object can be
+                # anywhere between 0 and 1 and must not be re-interpreted as a new open/close command
+                command = {**command, "gripper": self.last_gripper[robot]}
+            per_robot[robot] = self.space.expand(command, single_obs)
         self.targets = {robot: actions[-1] for robot, (actions, _) in per_robot.items()}
+        self.last_gripper = {robot: float(grippers[-1]) for robot, (_, grippers) in per_robot.items()}
         return [
             {
                 robot: SingleAct(

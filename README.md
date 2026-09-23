@@ -210,6 +210,22 @@ In-context examples are exported from a LeRobot dataset (at most 10 episodes), e
 ```shell
 python -m vlagents.policies.vlm_icl <lerobot_dataset_dir> transfer_cube_icl.json --episodes 10 --stride 30 --control-mode xyzrpy --image-size 224
 ```
+### Residual edit policy (EXPO-style)
+`vlagents/policies/residual.py` adds a small network that edits the VLM's chunk at control rate: the nominal target of every step is shifted by a bounded delta (default 2 cm / 5 deg per axis) computed from the chunk geometry, the gripper states and a privileged task state (for `duobench/ball_maze`: ball position and velocity in the board frame, board pose; `env_kwargs: {"task_state": true}`). It runs in the environment loop (`EvalConfig.editor`), also while the agent thinks when `simulate_inference_delay` is on, and records every step for training:
+
+```shell
+# warm start from demonstrations (deviation of the demonstrated path from the straight-line chunk); a DuoBench
+# replay recording with simulator states adds task-state labelled samples
+python -m vlagents.policies.residual_train warmstart <lerobot_dir> runs/residual/ckpt_warmstart.pt --replay-dir <replay_dir>
+# evaluate with the residual and let the VLM give hindsight corrections after every command
+python -m vlagents run-eval ... --agent-cfg '{..., "agent_kwargs": {"backend": "mailbox", "hindsight_corrections": true, "log_dir": "runs/maze/vlm", ...}}' \
+  --eval-cfgs '[{"env_id": "duobench/ball_maze", "env_kwargs": {"control_mode": "xyzrpy", "task_state": true}, "editor": {"control_mode": "xyzrpy", "ckpt": "runs/residual/ckpt_warmstart.pt"}, ...}]'
+# relabel the recorded steps with the corrections (edit + correction) and fine-tune
+python -m vlagents.policies.residual_train finetune runs/residual/ckpt_warmstart.pt runs/residual/ckpt_ft.pt runs/maze/M0 runs/maze/M1
+```
+
+With `hindsight_corrections` the VLM reply carries a `"correction"` per arm: the adjustment that, knowing the outcome, should have been added to the previous command's targets (with `from`/`to` fractions of the chunk). The prompt tells the VLM how much the residual intervened during the last command.
+
 See [docs/vlm_harness_plan.md](docs/vlm_harness_plan.md) for the design and the experiment plan.
 
 There is also the `run-eval-during-training` command to evaluate a model during training, so a single checkpoint.

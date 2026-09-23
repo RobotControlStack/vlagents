@@ -151,7 +151,39 @@ Real robot: same server, `examples/inference/franka.py` with `CONTROL_MODE = Con
 * **Real-world safety**: primitive budget + RCS `LimitedAbsoluteAction` clamp + `done`; the hardware path
   is identical, only the env creator changes.
 
-## 6. Status
+## 6. Residual edit policy (EXPO-style, `policies/residual.py`)
+
+The VLM is a good 1 Hz planner and a poor servo. Following EXPO (an expressive base policy plus a small edit
+policy that adjusts its actions), a residual network edits the VLM's chunk at 30 Hz inside the environment loop:
+
+* **Interface.** `EvalEnv.editor` receives every nominal action before execution (`edit(nominal, obs, i, n,
+  goal)`), also during the simulated inference hold (`holding=True`), so the residual keeps reacting while the
+  VLM thinks. Edits are bounded per axis (2 cm, 5 deg by default) and applied in the base frame
+  (`target + dxyz`, `exp(drot) * R_target`). Every step is recorded (features, nominal, edit, task state).
+* **Inputs.** Per arm: chunk goal relative to the nominal target (translation + rotation vector), gripper and
+  nominal gripper. Global: chunk phase, holding flag, task-state validity, task state. The task state comes from
+  the environment (`env_kwargs: {"task_state": true}`); for the ball maze it is the ball position and velocity
+  and the goal in the board frame plus the board pose (roll, pitch, yaw, centre). Neither the current nor the
+  absolute nominal tool pose is an input: with the current pose, behaviour cloning copies the tracking error and
+  cancels motion; with the absolute pose it memorises demonstration windows (validated on held-out episodes).
+* **Warm start.** `residual_train warmstart`: for every window of 30 frames of a demonstration the straight-line
+  chunk from the start pose to the reached pose is the nominal; the label is the demonstrated deviation from it.
+  On the 50 ball-maze demonstrations this explains only ~7 % of the held-out variance (the deviation of a
+  human path inside one second is mostly unpredictable from the chunk geometry), so the warm start is a mild
+  time-profile prior (~1 cm lead early in the chunk, zero at the end). Task-state inputs start inert (zero
+  first-layer weights) because the demonstrations carry no task state; the DuoBench replay recording (one
+  episode with simulator states) can be added but a single episode only gets memorised.
+* **Hindsight corrections.** With `hindsight_corrections: true` the VLM adds `"correction"` to every reply: per
+  arm the adjustment that should have been added to the previous command's targets over a fraction of the
+  chunk. The prompt reports the residual's intervention and the ball trace of the last command so the VLM can
+  attribute the outcome. `residual_train finetune` relabels each recorded step with `edit + correction`
+  (dataset aggregation, DAgger-style with hindsight labels) and continues training from the warm start together
+  with the prior data (lower weight).
+* **Not done here.** The RL part of EXPO (a Q-function ranking several edited candidates, trained on the stage
+  reward) needs many more rollouts than a pilot can produce; the harness has the pieces for it (records,
+  nominal chunks, stage reward per step).
+
+## 7. Status
 
 Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI key available):
 

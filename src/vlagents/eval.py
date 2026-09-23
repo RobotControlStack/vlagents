@@ -82,6 +82,8 @@ def single_eval(
     if obs.language_instruction is None:
         obs.language_instruction = env.language_instruction
     agent.reset(obs, obs.language_instruction)
+    if env.editor is not None:
+        env.editor.reset(ith_episode)
     single_obs = next(iter(obs.obs.values()))
     cameras = single_obs.info.pop("high_res_cameras", single_obs.cameras)
     logging.debug("Reset env")
@@ -104,7 +106,7 @@ def single_eval(
             if done or truncated:
                 rewards.append(rewards[-1] if rewards else 0.0)
                 break
-        obs, reward, done, truncated, _ = env.chunk_step(act, max_steps=max_steps - int(step))
+        obs, reward, done, truncated, _ = env.chunk_step(act, max_steps=max_steps - int(step), obs=obs)
         if obs.language_instruction is None:
             obs.language_instruction = env.language_instruction
         single_obs = next(iter(obs.obs.values()))
@@ -126,6 +128,8 @@ def single_eval(
                 output_dir / f"{ith_episode}_{camera}_{timestamp}.mp4",
             )
 
+    if env.editor is not None:
+        env.editor.save()
     env.reset()
     logging.debug(f"Finished evaluation with {step} steps and reward {reward}, success {done}")
     # success, last reward and number of steps
@@ -141,6 +145,13 @@ def create_env_agent(agent_config: AgentConfig, cfg: EvalConfig) -> tuple[EvalEn
     if key not in per_process_cache:
         logging.info(f"env {cfg.env_id} not available, creating new env and agent")
         env = EvalEnv.from_id(cfg.env_id, execution_horizon=cfg.execution_horizon, **cfg.env_kwargs)
+        if cfg.editor is not None:
+            from vlagents.policies.residual import ResidualEditor
+
+            editor_kwargs = dict(cfg.editor)
+            if "record_dir" not in editor_kwargs and "RUN_PATH" in os.environ:
+                editor_kwargs["record_dir"] = f"{os.environ['RUN_PATH']}/residual"
+            env.editor = ResidualEditor(**editor_kwargs)
         logging.info("done creating env")
         agent = RemoteAgent(
             agent_config.host,

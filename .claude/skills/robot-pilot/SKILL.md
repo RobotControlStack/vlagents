@@ -55,6 +55,19 @@ When the agent runs with in-context demonstrations (`icl_path`), `conversation.m
 demonstration observation (state text plus `context_N.jpg` keyframes in the episode folder) and the command that
 reproduced the next second of the recording. Read them once before answering step 0.
 
+## 3. Hindsight corrections (residual training)
+
+When the agent runs with `hindsight_corrections: true` (and the eval with an `editor`), a residual controller
+edits your targets at 30 Hz and the request tells you how much it intervened plus, for tasks with a task state,
+the trace of the object (e.g. the ball in the board frame) over the last command. From step 1 on add
+`"correction"` to `reply.json`: per arm the adjustment that, knowing the outcome, should have been added to the
+targets of your **previous** command, e.g.
+`"correction": {"left": {"dxyz": [0, 0, 0.01], "drpy_deg": [0, -3, 0], "from": 0.5, "to": 1.0}, "right": null}`
+(`from`/`to` = fraction of the command during which it should have applied; `null` = that arm was right; at most
+3 cm and 8 deg). Corrections are labels for the residual, not commands: still write the next command for the
+current state. Be honest and specific: "the ball rolled 4 cm past the corridor, the board should have levelled
+earlier" becomes a correction on the tilting arm with `from` at the moment the ball reached the corner.
+
 A persistent subagent (Agent tool, then SendMessage per step) keeps its own memory of the episode; a fresh
 agent per step should read `conversation.md` first. Results land in the eval `results_*.json`, videos under
 `videos/`, and the agent's own log under the `log_dir` kwarg if set.
