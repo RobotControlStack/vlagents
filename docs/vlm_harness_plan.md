@@ -218,6 +218,45 @@ Verified in this environment (CPU only, MuJoCo rendered with Mesa EGL, no OpenAI
   and placement pose and only read object positions from the images. Environment time per command fell from
   43 s to 11 s (now the simulated hold, physics only).
 
+* **Ball maze with the residual edit policy (runs M0 to M2, `duobench/ball_maze`, seed 42, three
+  demonstrations in context, simulated inference delay, privileged ball state in the prompt).** All four
+  episodes were piloted by a Claude Code subagent through the mailbox and all succeeded:
+
+  | run | residual | commands | env steps (incl. holds) | pilot latency median / mean | non-null corrections | residual max / mean edit |
+  |---|---|---|---|---|---|---|
+  | M0 | none | 31 | 33 869 | 27 s / 53 s | 9 | - |
+  | M1 | warm start (demonstrations) | 26 | 37 776 | 38 s / 51 s | 16 | 1.8 / 0.30 cm, 4.9 / 0.65 deg |
+  | M2 | fine-tuned on the M0 + M1 corrections | 21 | 19 799 | 31 s / 38 s | 14 | 2.0 / 0.34 cm, 4.9 / 0.90 deg |
+  | M2-control | none, same prompt as M2 | 23 | 18 309 | 25 s / 34 s | 5 | - |
+
+  M2 and its control ran with a corrected task prompt (grasp yaw equals the bar direction, the ball needs 8 to
+  15 degrees of tilt, a known route), which explains most of the drop from 31 to about 22 commands; the two
+  runs differ by two commands, within the noise of a single episode each. The pilots judged the residual
+  neutral to mildly harmful: the warm-start profile prior shifted the grippers by up to 1 cm during the
+  approach, and the fine-tuned network added 2 to 4 degrees of wrist pitch and about 1 cm of z offset that
+  sometimes opposed the intended tilt (fine-tuning on roughly 30 non-null corrections from 55 chunks does move
+  the task-state-conditioned outputs, but not yet in a consistently useful direction). Every episode
+  produced 4 000 to 4 500 relabelled steps after subsampling the holds; the correction data is in
+  `runs/maze/*/residual` and `runs/maze/*/vlm`.
+
+Lessons from the ball-maze runs:
+
+* Hindsight corrections are cheap to collect (the pilot writes them in the same reply) and precise (millimetre
+  offsets of the grasp, timing of a tilt), but two episodes are far too few for a network to generalise;
+  the useful next step is to aggregate corrections over many episodes or to replace the pilot by a scripted
+  corrector for the tilting phase (the privileged ball state makes one easy to write).
+* A bimanual rigid grasp punishes independent per-arm edits: a 1 cm difference between the arms tilts the
+  board by several degrees. The residual should act in the object frame (one board-pose edit mapped to both
+  arms), which is also where the ball dynamics live.
+* Bugs found by the pilots and fixed: a `hold` re-interpreted the observed 50 % opening of a gripper holding
+  the rim as "open" and dropped the board (holds now keep the last commanded gripper); the board state was
+  reported in the world frame (body poses read before the first reset); the residual's intervention summary
+  was one command late. Facts the pilots corrected in the task prompt: grasp yaw equals the bar direction,
+  the ball needs 8 to 15 degrees of tilt, corridors are 3 cm wide, the tool centre point is about 7 mm off
+  the finger centre along the closing axis.
+* With simulated inference delay the robot keeps executing the last command while the pilot thinks (30 to
+  90 s here); the pilots learned to choose tilts the ball can rest against. The prompt now says so.
+
 Lessons from the pilot runs, to fold into the harness next:
 
 * The task text says "cube" but the object is a 3.2 x 3.2 x 9.6 cm upright box; four commands were lost on

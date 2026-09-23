@@ -8,6 +8,7 @@ per arm. Commands are motion primitives that expand into a chunk of `chunk_size`
 """
 
 import base64
+import dataclasses
 import datetime
 import json
 import logging
@@ -643,6 +644,9 @@ class VLMAgent(Agent):
                 deviation = self.space.deviation(self.targets[robot], single_obs)
                 if deviation:
                     flags.append(deviation)
+            if robot in self.last_gripper:
+                # open/closed follows the last command; the observed opening (reported next to it) does not
+                single_obs = dataclasses.replace(single_obs, gripper=self.last_gripper[robot])
             lines.append(
                 f"{robot} arm: {self.space.state_text(single_obs)}" + (f" [{'; '.join(flags)}]" if flags else "")
             )
