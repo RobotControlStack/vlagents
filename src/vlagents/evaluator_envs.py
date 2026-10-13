@@ -73,6 +73,12 @@ class RCSDuoBench(EvaluatorEnv):
         cfg = gym.spec(env_id).entry_point.config()
         cfg.wrapper_cfg.binary_gripper = env_kwargs.pop("binary_gripper", True)
         cfg.headless = True
+        if self.control_mode == "joints":
+            # policies output absolute joint targets; the duobench scenes default to relative cartesian (teleop)
+            from rcs.envs.base import ControlMode, RelativeTo
+
+            cfg.control_mode = ControlMode.JOINTS
+            cfg.relative_to = RelativeTo.NONE
         super().__init__(env_id, cfg=cfg, **env_kwargs)
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
