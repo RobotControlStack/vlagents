@@ -68,7 +68,12 @@ class RCSDuoBench(EvaluatorEnv):
         self.robot_keys: str = env_kwargs.pop("robot_keys", ["left", "right"])
         self.control_mode: str = env_kwargs.pop("control_mode", "joints")
         self._instruction: str | None = None
-        super().__init__(env_id, **env_kwargs)
+        self.do_import()
+        # binary gripper + headless via the env creator's wrapper config
+        cfg = gym.spec(env_id).entry_point.config()
+        cfg.wrapper_cfg.binary_gripper = env_kwargs.pop("binary_gripper", True)
+        cfg.headless = True
+        super().__init__(env_id, cfg=cfg, **env_kwargs)
 
     def translate_obs(self, obs: dict[str, Any]) -> Obs:
         cameras = {}
@@ -115,17 +120,17 @@ class RCSDuoBench(EvaluatorEnv):
     @staticmethod
     def do_import():
         import rcs
-        from rcs_duobench.tasks import ball_maze
-        from rcs_duobench.tasks import bin_sort
-        from rcs_duobench.tasks import block_balance
-        from rcs_duobench.tasks import carry_pot
-        from rcs_duobench.tasks import join_blocks
-        from rcs_duobench.tasks import hinge_chest
-        from rcs_duobench.tasks import pour_marbles
-        from rcs_duobench.tasks import spring_door
-        from rcs_duobench.tasks import transfer_cube
-        from rcs_duobench.tasks import transfer_gate
-        from rcs_duobench.tasks import transfer_reorient
+        from duobench.tasks import ball_maze
+        from duobench.tasks import bin_sort
+        from duobench.tasks import block_balance
+        from duobench.tasks import carry_pot
+        from duobench.tasks import join_blocks
+        from duobench.tasks import hinge_chest
+        from duobench.tasks import pour_marbles
+        from duobench.tasks import spring_door
+        from duobench.tasks import transfer_cube
+        from duobench.tasks import transfer_gate
+        from duobench.tasks import transfer_reorient
 
 
 EvaluatorEnv.register("duobench/ball_maze", RCSDuoBench)

@@ -255,8 +255,8 @@ class LeRobotPolicy(Agent):
 
 
         with torch.inference_mode():
-            # action = self.policy.select_action(observation)
-            action = self.policy.predict_action_chunk(observation)
+            # single action; the policy re-plans every n_action_steps (action queue)
+            action = self.policy.select_action(observation)
         action = self.postprocessor(action)
 
         if isinstance(action, torch.Tensor):
