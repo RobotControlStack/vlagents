@@ -61,6 +61,34 @@ class EvaluatorEnv(ABC):
         raise NotImplementedError
 
 
+_MJ_ARENA_PATCHED = False
+
+
+def _ensure_mujoco_arena_memory(floor_mb: int = 256) -> None:
+    """Give every compiled DuoBench scene a fixed MuJoCo arena (MjSpec.memory) before compile.
+
+    MuJoCo sizes the arena from the resting model; contact-heavy states (ball_maze: ~175 contacts) overflow it and
+    abort the worker with "mj_stackAlloc: insufficient memory", which hangs the eval pool. Same fix as
+    allenai/vla-evaluation-harness (duobench/utils.py). DUOBENCH_MJ_ARENA_MB overrides, 0 disables.
+    """
+    global _MJ_ARENA_PATCHED
+    floor = int(os.environ.get("DUOBENCH_MJ_ARENA_MB", floor_mb)) * 1024 * 1024
+    if _MJ_ARENA_PATCHED or floor <= 0:
+        return
+    from rcs.sim.composer import ModelComposer
+
+    original = ModelComposer.get_model
+
+    def get_model(self):
+        current = int(self.spec.memory)
+        if current in (-1, (1 << 64) - 1) or current < floor:  # auto-size sentinel differs between MuJoCo versions
+            self.spec.memory = floor
+        return original(self)
+
+    ModelComposer.get_model = get_model
+    _MJ_ARENA_PATCHED = True
+
+
 class RCSDuoBench(EvaluatorEnv):
     INSTRUCTIONS = {}
 
@@ -68,7 +96,10 @@ class RCSDuoBench(EvaluatorEnv):
         self.robot_keys: str = env_kwargs.pop("robot_keys", ["left", "right"])
         self.control_mode: str = env_kwargs.pop("control_mode", "joints")
         self._instruction: str | None = None
+        # optional prompt override, e.g. the instruction string the training data used
+        self._instruction_override: str | None = env_kwargs.pop("instruction", None)
         self.do_import()
+        _ensure_mujoco_arena_memory()
         # binary gripper + headless via the env creator's wrapper config
         cfg = gym.spec(env_id).entry_point.config()
         cfg.wrapper_cfg.binary_gripper = env_kwargs.pop("binary_gripper", True)
@@ -122,7 +153,7 @@ class RCSDuoBench(EvaluatorEnv):
 
     def reset(self, seed: int | None = None, options: dict[str, Any] | None = None) -> tuple[Obs, dict[str, Any]]:
         obs, info = self.env.reset(seed=seed, options=options)
-        self._instruction = info["instruction"]
+        self._instruction = self._instruction_override or info["instruction"]
         return self.translate_obs(obs), info
 
     @property
