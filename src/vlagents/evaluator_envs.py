@@ -73,6 +73,13 @@ class RCSDuoBench(EvaluatorEnv):
         cfg = gym.spec(env_id).entry_point.config()
         cfg.wrapper_cfg.binary_gripper = env_kwargs.pop("binary_gripper", True)
         cfg.headless = True
+        # fixed-rate stepping like the teleop recordings (async 30 Hz), not the scene default
+        # SimConfig(async_control=False) which simulates every step until the arm converges on its target
+        from rcs._core.sim import SimConfig
+
+        cfg.sim_cfg = SimConfig(
+            async_control=True, realtime=False, frequency=env_kwargs.pop("frequency", 30), max_convergence_steps=500
+        )
         if self.control_mode == "joints":
             # policies output absolute joint targets; the duobench scenes default to relative cartesian (teleop)
             from rcs.envs.base import ControlMode, RelativeTo
